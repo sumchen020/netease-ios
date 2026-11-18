@@ -120,6 +120,7 @@ class MainActivity : ComponentActivity() {
                     onSelectTransportMode = ::selectTransportMode,
                     onApplyNonEmptyToken = ::applyNonEmptyTokenAndPrepare,
                     onAuthorizeSafDirectory = ::authorizeCurrentGameDirectory,
+                    onRevokeSafDirectory = ::revokeCurrentGameDirectory,
                     onPrepareIosLogin = ::beginPrepare,
                     onRefreshDiagnosticLog = ::refreshDiagnosticLog,
                     onClearDiagnosticLog = ::clearDiagnosticLog
@@ -223,6 +224,22 @@ class MainActivity : ComponentActivity() {
             return
         }
         launchDirectoryPicker(spec, resumePrepare = false)
+    }
+
+    private fun revokeCurrentGameDirectory() {
+        if (uiState.busy) return
+        val spec = uiState.currentGame?.spec ?: return
+        if (uiState.transportMode != SeedTransportMode.SAF_MEDIA) return
+
+        try {
+            SeedStorage.revokeDirectoryGrant(this, spec.packageName)
+            refreshFromPrefs(updateStatusMessage = false)
+            showMessage("已取消「${spec.displayName}」的目录授权，需要使用共享目录时请重新授权。", StatusTone.Neutral)
+        } catch (e: SeedStorageException) {
+            showMessage(e.message ?: "取消目录授权失败，请重试。", StatusTone.Error)
+        } catch (_: Exception) {
+            showMessage("取消目录授权失败，请重试。", StatusTone.Error)
+        }
     }
 
     private fun launchDirectoryPicker(spec: GameSpec, resumePrepare: Boolean) {
