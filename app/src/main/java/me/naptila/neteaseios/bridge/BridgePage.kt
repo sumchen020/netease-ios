@@ -9,10 +9,12 @@ internal object BridgePage {
         base: String,
         compatibilityMode: Boolean
     ): String {
+        // Full recovery and compatibility instructions live in the assistant.
+        // The game-side page should only report the current technical stage.
         val guidance = if (compatibilityMode) {
-            "兼容模式已提交 iOS 登录准备。请回游戏重新登录并核对角色；若仍未成功，可适当重试或联系开发者。SDK 未确认时无法判定最终登录平台。"
+            "兼容模式请求已提交，SDK 结果未确认。请返回游戏核对角色，详细操作见助手。"
         } else {
-            "已提交 iOS 登录准备。请回游戏重新登录并核对角色；若仍进入安卓角色，可尝试助手的「登录兼容性设置」。SDK 未确认时无法判定最终登录平台。"
+            "iOS 登录准备请求已提交，SDK 结果未确认。请返回游戏核对角色，详细操作见助手。"
         }
         val badgeText = escapeHtml("网易 iOS 登录桥接 · $appLabel")
 
@@ -26,23 +28,25 @@ internal object BridgePage {
             append("h2{margin:0 0 9px;font-size:19px;color:#0f172a}")
             append("#status{margin:0 0 16px;color:#475569;font-size:13px;line-height:1.65}")
             append(".help{margin:0 0 15px;padding:9px 11px;border-radius:10px;background:#f1f5fb;border:1px solid #d9e2ef;color:#495b78;font-size:12px;line-height:1.6}.help summary{cursor:pointer;font-weight:600}.help p{margin:7px 0 0}")
-            append("button{appearance:none;border:0;border-radius:11px;background:#26529b;color:#fff;font-size:14px;font-weight:600;padding:11px 16px;width:100%;cursor:pointer}")
+            append("button{appearance:none;border:0;border-radius:11px;background:#26529b;color:#fff;font-size:14px;font-weight:600;padding:11px 16px;flex:1;cursor:pointer}")
+            append(".actions{display:flex;gap:9px}.secondary{background:#e8effa;color:#2457a5}")
             append("</style></head><body>")
             append("<div class=\"card\">")
             append("<span class=\"badge\">").append(badgeText).append("</span>")
             append("<h2>准备 iOS 登录</h2>")
             append("<p id=\"status\">正在检测游戏登录状态…</p>")
             append("<details class=\"help\"><summary>登录说明及注意事项</summary><p>按游戏实际显示的「重新登录」或「切换账号」入口操作；旧弹窗需先关闭再重开。SDK 未确认时不能判定 iOS 登录成功。详细阶段日志请返回助手查看。</p></details>")
-            append("<button onclick=\"window.ntesBridgeClose()\">返回游戏</button>")
+            append("<div class=\"actions\"><button class=\"secondary\" onclick=\"window.ntesOpenAssistant()\">返回助手</button><button onclick=\"window.ntesBridgeClose()\">返回游戏</button></div>")
             append("</div>")
-            append("<script>(function(){console.log=function(){};window.ntesBridgeClose=userClose;")
+            append("<script>(function(){console.log=function(){};window.ntesBridgeClose=userClose;window.ntesOpenAssistant=openAssistant;")
             append("var complete=false,sending=false,tries=0,importing=false,callbackSeen=false;")
             append("var base=").append(quote(base)).append(";")
             append("function show(s){document.getElementById('status').textContent=s;}")
             append("function closePage(){AndroidJSBridge.postMsgToNative(JSON.stringify({methodId:'navigation_bar_func',reqData:{methodId:'close',action:'close'}}));}")
             append("function userClose(){if(importing&&!complete){finishImport(false,'manual_return');return;}closePage();}")
+            append("function openAssistant(){show('正在尝试打开助手…');post('/return-assistant',{}).then(function(){show('已请求打开助手。如未跳转，请通过最近任务打开助手。');}).catch(function(){show('无法自动打开助手，请通过最近任务打开助手查看详情。');});}")
             append("function post(route,j){return fetch(base+route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(j)}).then(function(r){if(!r.ok)throw Error();return r.json();});}")
-            append("function fail(reason,text){if(complete)return;complete=true;show(text);post('/failed',{reason:reason}).catch(function(){});}")
+            append("function fail(reason,text){if(complete)return;complete=true;show(text+' 可点「返回助手」查看详情，或通过最近任务打开。');post('/failed',{reason:reason}).catch(function(){});}")
             append("function finishImport(confirmed,reason){if(complete)return;complete=true;show(confirmed?'SDK 已确认加载请求，请回游戏核对角色。':").append(quote(guidance)).append(");post('/submitted',{confirmed:confirmed,reason:String(reason||'unknown')}).then(function(){setTimeout(closePage,900);}).catch(function(){show('准备结果未能回传助手，请返回游戏核对登录结果。');});}")
             append("function receiveImport(raw){if(complete||!importing)return;if(!callbackSeen){callbackSeen=true;post('/stage',{event:'sdk_callback_seen'}).catch(function(){});}try{var j=typeof raw==='string'?JSON.parse(raw):raw;if(!j)return;if(j.errCode===0||j.errCode==='0'){finishImport(true,'sdk_confirmed');return;}if(j.errCode!==undefined&&Number(j.errCode)!==0){var m=String(j.errMsg||'');fail(m==='File content is empty'?'sdk_read_failed':m==='No valid login info found'?'sdk_invalid_session':'sdk_rejected','SDK 未接受本次准备，请返回助手查看结果。');}}catch(e){}}")
             append("function receive(raw){if(complete||sending||importing)return;try{var j=typeof raw==='string'?JSON.parse(raw):raw;if(!j||j.executed_methodId!=='gameContextInfo')return;")
