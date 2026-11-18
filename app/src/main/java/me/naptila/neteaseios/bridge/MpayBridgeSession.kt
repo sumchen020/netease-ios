@@ -57,6 +57,8 @@ class MpayBridgeSession(
     @Volatile
     private var capturedGameId: String = ""
     @Volatile
+    private var verifiedContext: ContextIdentity? = null
+    @Volatile
     private var preparedSeed: PreparedSeed? = null
     @Volatile
     private var unconfirmedCleanupDeferred = false
@@ -153,6 +155,27 @@ class MpayBridgeSession(
                     }
 
                     when (route) {
+                        "/check" -> {
+                            // A fresh game bridge account-context response is required before
+                            // any iOS preparation file is generated. This does not prove server login.
+                            val identity = runCatching { readIdentity(input) }.getOrNull()
+                            if (identity == null) {
+                                BridgeDiagnosticLog.record(appContext, target.spec.packageName, BridgeLogEvent.ACCOUNT_CHECK_FAILED)
+                                fail("游戏接口未返回可识别的账号状态，请返回游戏重新登录。")
+                                reply(socket, 200, "application/json", "{\"ok\":false,\"reason\":\"source_mismatch\"}")
+                                return@use
+                            }
+                            if (identity.uid == null) {
+                                BridgeDiagnosticLog.record(appContext, target.spec.packageName, BridgeLogEvent.ACCOUNT_CHECK_FAILED)
+                                fail("未检测到游戏登录账号，请先在游戏中完成登录。")
+                                reply(socket, 200, "application/json", "{\"ok\":false,\"reason\":\"not_logged_in\"}")
+                                return@use
+                            }
+                            verifiedContext = identity
+                            BridgeDiagnosticLog.record(appContext, target.spec.packageName, BridgeLogEvent.ACCOUNT_CHECK_PASSED)
+                            reply(socket, 200, "application/json", "{\"ok\":true}")
+                        }
+
                         "/prepare" -> {
                             val parsed = runCatching { readIdentity(input) }.getOrNull()
                             if (parsed == null) {
@@ -160,6 +183,15 @@ class MpayBridgeSession(
                                 reply(socket, 200, "application/json", "{\"ok\":false,\"reason\":\"source_mismatch\"}")
                                 return@use
                             }
+                            val verified = verifiedContext
+                            if (verified == null || verified != parsed || verified.uid == null) {
+                                BridgeDiagnosticLog.record(appContext, target.spec.packageName, BridgeLogEvent.ACCOUNT_CHECK_FAILED)
+                                fail("游戏登录状态已变化，请重新检测后再准备。")
+                                reply(socket, 200, "application/json", "{\"ok\":false,\"reason\":\"context_changed\"}")
+                                return@use
+                            }
+                            // One verified game context can be used for one seed only.
+                            verifiedContext = null
                             val uid = parsed.uid
                             if (uid == null) {
                                 fail("未读取到已登录的网易账号，请先在「${target.appLabel}」正常登录该账号后再试。")
@@ -424,6 +456,8 @@ internal enum class BridgeLogEvent(val label: String) {
     SESSION_STARTED("桥接会话已启动"),
     PAGE_OPENED("游戏桥接页已打开"),
     CONTEXT_RECEIVED("收到账号上下文（不保存内容）"),
+    ACCOUNT_CHECK_PASSED("写入前游戏账号检查通过"),
+    ACCOUNT_CHECK_FAILED("写入前游戏账号检查失败，未继续写入"),
     SAF_VERIFIED("临时文件写入完成且 SAF 读回一致"),
     CACHE_WRITTEN("缓存临时文件写入完成"),
     LOAD_REQUEST_READY("已生成 SDK 加载请求"),
