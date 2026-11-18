@@ -6,9 +6,14 @@ import java.util.Locale
 internal object BridgePage {
     fun render(
         appLabel: String,
-        base: String
+        base: String,
+        compatibilityMode: Boolean
     ): String {
-        val guidance = "返回游戏后，先关闭可能已打开的旧登录弹窗，再使用游戏当前提供的「重新登录」或「切换账号」入口重新登录，并核对区服与角色。"
+        val guidance = if (compatibilityMode) {
+            "兼容模式已提交 iOS 登录准备。请回游戏重新登录并核对角色；若仍未成功，可适当重试或联系开发者。SDK 未确认时无法判定最终登录平台。"
+        } else {
+            "已提交 iOS 登录准备。请回游戏重新登录并核对角色；若仍进入安卓角色，可尝试助手的「登录兼容性设置」。SDK 未确认时无法判定最终登录平台。"
+        }
         val badgeText = escapeHtml("网易 iOS 登录桥接 · $appLabel")
 
         return buildString {
@@ -38,7 +43,7 @@ internal object BridgePage {
             append("function userClose(){if(importing&&!complete){finishImport(false,'manual_return');return;}closePage();}")
             append("function post(route,j){return fetch(base+route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(j)}).then(function(r){if(!r.ok)throw Error();return r.json();});}")
             append("function fail(reason,text){if(complete)return;complete=true;show(text);post('/failed',{reason:reason}).catch(function(){});}")
-            append("function finishImport(confirmed,reason){if(complete)return;complete=true;show(confirmed?'SDK 已确认加载请求，请回游戏核对角色。':'请求已发送，SDK 未确认是否接受；请回游戏重新登录并核对角色。');post('/submitted',{confirmed:confirmed,reason:String(reason||'unknown')}).then(function(){show(").append(quote(guidance)).append(");setTimeout(closePage,250);}).catch(function(){show('请求未能确认，请返回游戏核对登录结果。');});}")
+            append("function finishImport(confirmed,reason){if(complete)return;complete=true;show(confirmed?'SDK 已确认加载请求，请回游戏核对角色。':").append(quote(guidance)).append(");post('/submitted',{confirmed:confirmed,reason:String(reason||'unknown')}).then(function(){setTimeout(closePage,900);}).catch(function(){show('准备结果未能回传助手，请返回游戏核对登录结果。');});}")
             append("function receiveImport(raw){if(complete||!importing)return;if(!callbackSeen){callbackSeen=true;post('/stage',{event:'sdk_callback_seen'}).catch(function(){});}try{var j=typeof raw==='string'?JSON.parse(raw):raw;if(!j)return;if(j.errCode===0||j.errCode==='0'){finishImport(true,'sdk_confirmed');return;}if(j.errCode!==undefined&&Number(j.errCode)!==0){var m=String(j.errMsg||'');fail(m==='File content is empty'?'sdk_read_failed':m==='No valid login info found'?'sdk_invalid_session':'sdk_rejected','SDK 未接受本次准备，请返回助手查看结果。');}}catch(e){}}")
             append("function receive(raw){if(complete||sending||importing)return;try{var j=typeof raw==='string'?JSON.parse(raw):raw;if(!j||j.executed_methodId!=='gameContextInfo')return;")
             append("sending=true;show('正在核验游戏账号…');var context={full:String(j.user_name||''),game:String(j.game_id||''),channel:String(j.app_channel||'')};post('/check',context).then(function(check){if(complete)return null;if(!check.ok){var r=String(check.reason||'check_failed');fail(r,r==='not_logged_in'?'请先在游戏内登录账号。':'游戏账号检查失败，请重新登录后重试。');return null;}show('已检测到账号，正在准备 iOS 数据…');return post('/prepare',context);}).then(function(v){")
