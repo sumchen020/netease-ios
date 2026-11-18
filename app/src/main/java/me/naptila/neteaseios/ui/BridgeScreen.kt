@@ -1294,7 +1294,7 @@ private fun BridgeScreenPreview() {
             onSelectInstalledGame = {},
             onRefreshApps = {},
             onSelectTransportMode = {},
-            onToggleNonEmptyToken = {},
+            onApplyNonEmptyToken = {},
             onAuthorizeSafDirectory = {},
             onPrepareIosLogin = {}
         )
