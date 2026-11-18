@@ -315,7 +315,7 @@ class MainActivity : ComponentActivity() {
             busy = true,
             submittedCurrent = false,
             unconfirmedCurrent = false,
-            statusMessage = "正在连接「${spec.displayName}」准备 iOS 登录…",
+            statusMessage = "正在检测「${spec.displayName}」游戏账号…",
             statusTone = StatusTone.Neutral
         )
 
@@ -511,7 +511,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 else -> {
-                    message = "请先在「$gameName」正常登录账号，再点击「一键准备 iOS 登录」；准备后按游戏实际提供的「重新登录」或「切换账号」入口重登，并核对角色。"
+                    message = "先在「$gameName」登录，再点击「检测并准备」。"
                     tone = StatusTone.Neutral
                 }
             }
