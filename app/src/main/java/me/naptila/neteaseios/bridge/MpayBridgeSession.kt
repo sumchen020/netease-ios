@@ -176,14 +176,17 @@ class MpayBridgeSession(
                             val seed = try {
                                 getOrWriteSeed(uid)
                             } catch (e: SeedStorageException) {
+                                BridgeDiagnosticLog.record(appContext, target.spec.packageName, BridgeLogEvent.STORAGE_ERROR)
                                 fail(e.message ?: "准备文件写入失败，请检查目录授权或写入方式后重试。")
                                 reply(socket, 200, "application/json", "{\"ok\":false,\"reason\":\"storage_failed\"}")
                                 return@use
                             } catch (_: DirectoryAccessRequired) {
+                                BridgeDiagnosticLog.record(appContext, target.spec.packageName, BridgeLogEvent.STORAGE_ERROR)
                                 fail("共享媒体目录授权已失效，请返回助手重新授权 Android/media 目录。")
                                 reply(socket, 200, "application/json", "{\"ok\":false,\"reason\":\"directory_required\"}")
                                 return@use
                             } catch (_: Exception) {
+                                BridgeDiagnosticLog.record(appContext, target.spec.packageName, BridgeLogEvent.STORAGE_ERROR)
                                 fail("准备文件写入失败，请返回助手检查写入方式与剩余空间后重试。")
                                 reply(socket, 200, "application/json", "{\"ok\":false,\"reason\":\"storage_failed\"}")
                                 return@use
