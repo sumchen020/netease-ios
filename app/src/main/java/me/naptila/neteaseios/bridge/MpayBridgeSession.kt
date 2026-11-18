@@ -418,6 +418,7 @@ class MpayBridgeSession(
                 confirmed -> BridgeLogEvent.SDK_CONFIRMED
                 callbackReason == "manual_return" -> BridgeLogEvent.USER_LEFT_EARLY
                 callbackReason == "unrecognized_callback" -> BridgeLogEvent.SDK_UNKNOWN_CALLBACK
+                callbackReason == "host_timeout" -> BridgeLogEvent.HOST_TIMEOUT_UNCONFIRMED
                 else -> BridgeLogEvent.SDK_TIMEOUT
             }
         )
@@ -524,6 +525,7 @@ internal enum class BridgeLogEvent(val label: String) {
     SDK_CONFIRMED("SDK 返回成功码，游戏角色需另行核对"),
     SDK_UNKNOWN_CALLBACK("SDK 回调无法识别，结果未知"),
     SDK_TIMEOUT("30 秒未得到 SDK 确认"),
+    HOST_TIMEOUT_UNCONFIRMED("会话超时：已写入且发出 SDK 请求，结果待核对"),
     USER_LEFT_EARLY("提前返回游戏，无法确认 SDK 结果"),
     SDK_READ_FAILED("SDK 报告无法读取准备文件"),
     SDK_REJECTED("SDK 拒绝或报告登录格式无效"),
