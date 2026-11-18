@@ -64,6 +64,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -111,7 +114,8 @@ data class BridgeUiState(
     val unconfirmedCurrent: Boolean = false,
     val transportMode: SeedTransportMode = SeedTransportMode.STANDARD,
     val nonEmptyToken: Boolean = false,
-    val safAuthorized: Boolean = false
+    val safAuthorized: Boolean = false,
+    val diagnosticEvents: List<String> = emptyList()
 ) {
     val effectiveGameId: String? get() = currentGame?.spec?.gameId ?: detectedGameId
     val gameDisplayName: String get() = currentGame?.spec?.displayName ?: "目标游戏"
@@ -126,7 +130,9 @@ fun BridgeScreen(
     onSelectTransportMode: (SeedTransportMode) -> Unit,
     onApplyNonEmptyToken: (Boolean) -> Unit,
     onAuthorizeSafDirectory: () -> Unit,
-    onPrepareIosLogin: () -> Unit
+    onPrepareIosLogin: () -> Unit,
+    onRefreshDiagnosticLog: () -> Unit,
+    onClearDiagnosticLog: () -> Unit
 ) {
     val dark = isSystemInDarkTheme()
     val scheme = MaterialTheme.colorScheme
@@ -193,6 +199,11 @@ fun BridgeScreen(
                 LoginCompatibilityCard(
                     state = state,
                     onApplyNonEmptyToken = onApplyNonEmptyToken
+                )
+                DiagnosticLogCard(
+                    state = state,
+                    onRefresh = onRefreshDiagnosticLog,
+                    onClear = onClearDiagnosticLog
                 )
             }
         }
@@ -1149,6 +1160,119 @@ private fun LoginCompatibilityCard(
     }
 }
 
+/**
+ * Locally stored, limited non-secret diagnostic events.
+ * Displaying the log never invokes the game's login SDK.
+ */
+@Composable
+private fun DiagnosticLogCard(
+    state: BridgeUiState,
+    onRefresh: () -> Unit,
+    onClear: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    val clipboard = LocalClipboardManager.current
+    var showLog by remember(state.currentGame?.spec?.packageName) { mutableStateOf(false) }
+
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = scheme.surface),
+        border = BorderStroke(1.dp, scheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                imageVector = AppIcons.Info,
+                contentDescription = null,
+                tint = scheme.primary,
+                modifier = Modifier.size(24.dp)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text("诊断日志", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "检查目录写入、SDK 调用和回调结果",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+            FilledTonalButton(
+                onClick = { onRefresh(); showLog = true },
+                enabled = state.currentGame != null
+            ) {
+                Text("查看")
+            }
+        }
+    }
+
+    if (showLog) {
+        AlertDialog(
+            onDismissRequest = { showLog = false },
+            title = { Text("诊断日志 · ${state.gameDisplayName}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "仅保存最近 60 条操作阶段，不含账号、UID、密码、token 和原始 SDK 回调。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant
+                    )
+                    Surface(
+                        color = scheme.surfaceVariant.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        SelectionContainer {
+                            Column(
+                                modifier = Modifier
+                                    .heightIn(max = 330.dp)
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(7.dp)
+                            ) {
+                                if (state.diagnosticEvents.isEmpty()) {
+                                    Text("暂无日志。执行一次登录准备后再查看。", style = MaterialTheme.typography.bodySmall)
+                                } else {
+                                    state.diagnosticEvents.forEach { entry ->
+                                        Text(
+                                            text = entry,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = scheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    TextButton(
+                        onClick = onClear,
+                        enabled = state.diagnosticEvents.isNotEmpty()
+                    ) {
+                        Text("清空本游戏日志")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        clipboard.setText(
+                            AnnotatedString(state.diagnosticEvents.joinToString("\n"))
+                        )
+                    },
+                    enabled = state.diagnosticEvents.isNotEmpty()
+                ) {
+                    Text("复制日志")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLog = false }) { Text("关闭") }
+            }
+        )
+    }
+}
+
 @Composable
 private fun SelectionIndicator(selected: Boolean) {
     val scheme = MaterialTheme.colorScheme
@@ -1299,7 +1423,9 @@ private fun BridgeScreenPreview() {
             onSelectTransportMode = {},
             onApplyNonEmptyToken = {},
             onAuthorizeSafDirectory = {},
-            onPrepareIosLogin = {}
+            onPrepareIosLogin = {},
+            onRefreshDiagnosticLog = {},
+            onClearDiagnosticLog = {}
         )
     }
 }
