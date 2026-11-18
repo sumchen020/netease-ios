@@ -107,7 +107,8 @@ data class GameTarget(
             for (ri in resolveList) {
                 val actInfo = ri.activityInfo ?: continue
                 val pkg = actInfo.packageName ?: continue
-                if (pkg == selfPkg || !seen.add(pkg)) continue
+                // Show only the requested NetEase package family in the target picker.
+                if (pkg == selfPkg || !pkg.startsWith("com.netease.") || !seen.add(pkg)) continue
 
                 val appInfo = actInfo.applicationInfo
                 val label = runCatching {
