@@ -151,6 +151,42 @@ internal object SeedStorage {
             .apply()
     }
 
+    /**
+     * Detach a single game's SAF directory. Android grants belong to this helper app,
+     * so release the underlying persisted permission only if no other game still
+     * refers to the same tree. Never delete or enumerate any game files.
+     */
+    fun revokeDirectoryGrant(context: Context, packageName: String) {
+        require(BridgeProtocol.isValidPackageName(packageName))
+        val prefs = MpayBridgeSession.prefs(context)
+        val key = "media_tree_$packageName"
+        val stored = prefs.getString(key, null) ?: return
+        val otherGameUsesSameTree = prefs.all.any { (otherKey, value) ->
+            otherKey != key && otherKey.startsWith("media_tree_") && value == stored
+        }
+        if (!otherGameUsesSameTree) {
+            val uri = runCatching { Uri.parse(stored) }.getOrNull()
+            if (uri != null) {
+                val persisted = context.contentResolver.persistedUriPermissions.any {
+                    it.uri == uri
+                }
+                if (persisted) {
+                    try {
+                        context.contentResolver.releasePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        )
+                    } catch (_: SecurityException) {
+                        throw SeedStorageException("无法撤销系统目录权限，请稍后重试。")
+                    }
+                }
+            }
+        }
+        // Remove this game's association even when a shared tree must stay granted
+        // for another selected NetEase game.
+        prefs.edit().remove(key).apply()
+    }
+
     fun write(
         context: Context,
         target: GameTarget,
