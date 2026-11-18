@@ -1007,7 +1007,7 @@ private fun PrepareIosCard(
                             .size(17.dp)
                     )
                     Text(
-                        text = "若准备前已点开登录弹窗，回游戏必须先点右上角「×」关闭再重开，直接点旧列表会一直转圈。",
+                        text = "如果游戏的登录弹窗已打开，请先关闭再重开。以游戏实际显示的「重新登录」或「切换账号」为准，勿直接点旧缓存记录。",
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium,
                         color = warnFg
