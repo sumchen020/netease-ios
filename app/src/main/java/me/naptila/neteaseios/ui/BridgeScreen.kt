@@ -966,10 +966,6 @@ private fun PrepareIosCard(
                         }
                     }
 
-            if (!hasGame) {
-                Text("请先在上方选择目标网易游戏。", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
-            }
-
             Button(
                 onClick = onPrepareIosLogin,
                 enabled = !state.busy && state.currentGame?.installed == true &&
