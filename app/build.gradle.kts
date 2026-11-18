@@ -15,7 +15,9 @@ val hasReleaseKeystore = releaseStoreFile != null &&
 android {
     namespace = "me.naptila.neteaseios"
     compileSdk {
-        version = release(37)
+        version = release(37) {
+            minorApiLevel = 0
+        }
     }
 
     defaultConfig {
