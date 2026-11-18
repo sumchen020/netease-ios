@@ -37,12 +37,18 @@ internal class PreparationHistory(private val prefs: SharedPreferences) {
         prefs.edit().putString("attempt_$pkg", attempt)
             .putLong("build_$pkg", game.lastUpdateTime)
             .putString("result_$pkg", "preparing")
-            .remove("error_$pkg").apply()
+            .remove("error_$pkg")
+            .remove("diagnostic_$pkg").apply()
     }
 
-    fun finish(pkg: String, attempt: String, result: String, error: String?): Boolean {
+    fun finish(pkg: String, attempt: String, result: String, error: String?, diagnostic: String? = null): Boolean {
         if (prefs.getString("attempt_$pkg", null) != attempt || this.result(pkg) != "preparing") return false
-        prefs.edit().putString("result_$pkg", result).putString("error_$pkg", error).apply()
+        // Diagnostic text includes only outcome, transport and app label, never account data.
+        prefs.edit()
+            .putString("result_$pkg", result)
+            .putString("error_$pkg", error)
+            .putString("diagnostic_$pkg", diagnostic)
+            .apply()
         return true
     }
 
@@ -54,6 +60,7 @@ internal class PreparationHistory(private val prefs: SharedPreferences) {
 
     fun result(pkg: String): String? = prefs.getString("result_$pkg", null)
     fun error(pkg: String): String? = prefs.getString("error_$pkg", null)
+    fun diagnostic(pkg: String): String? = prefs.getString("diagnostic_$pkg", null)
 
     fun sameBuild(game: InstalledGame): Boolean =
         game.installed && game.lastUpdateTime > 0 &&
