@@ -109,9 +109,14 @@ class MpayBridgeSession(
                 putExtra("GM_WEBVIEW_URL", "http://$host$base/page")
             }
             try {
+                BridgeDiagnosticLog.record(appContext, target.spec.packageName, BridgeLogEvent.BRIDGE_INTENT_ATTEMPTED)
                 appContext.startActivity(intent)
+                // Activity start accepted by Android != target game page opened;
+                // only PAGE_OPENED confirms that the game WebView loaded the page.
+                BridgeDiagnosticLog.record(appContext, target.spec.packageName, BridgeLogEvent.BRIDGE_INTENT_DISPATCHED)
             } catch (_: Exception) {
-                fail("无法拉起「${target.appLabel}」网页容器，该游戏大概率不支持此登录方式（仅支持开放网页桥接口的网易官服游戏）。")
+                BridgeDiagnosticLog.record(appContext, target.spec.packageName, BridgeLogEvent.BRIDGE_INTENT_REJECTED)
+                fail("无法拉起「${target.appLabel}」网页容器，请检查游戏网页桥是否开放。")
                 close()
             }
         }, 1500L)
@@ -457,6 +462,14 @@ internal enum class BridgeLogEvent(val label: String) {
     TRANSPORT_CACHE("准备方式：标准缓存"),
     PLACEHOLDER_ON("兼容设置：非空占位已开启"),
     PLACEHOLDER_OFF("兼容设置：非空占位已关闭"),
+    OVERLAY_CONFIRMED("在游戏悬浮窗点击确定（游戏通常仍在前台）"),
+    ASSISTANT_CONFIRMED("返回助手弹窗点击确定（游戏可能进入后台）"),
+    GAME_LAUNCH_SENT("已向系统发出打开目标游戏请求"),
+    OVERLAY_DISPLAYED("游戏悬浮窗已显示"),
+    OVERLAY_FALLBACK("没有游戏悬浮窗，使用返回助手确认流程"),
+    BRIDGE_INTENT_ATTEMPTED("尝试启动游戏网页桥容器"),
+    BRIDGE_INTENT_DISPATCHED("系统已接受网页桥启动请求（非已打开证明）"),
+    BRIDGE_INTENT_REJECTED("系统拒绝启动网页桥容器"),
     SESSION_STARTED("桥接会话已启动"),
     PAGE_OPENED("游戏桥接页已打开"),
     CONTEXT_RECEIVED("收到账号上下文（不保存内容）"),
