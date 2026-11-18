@@ -121,9 +121,9 @@ class MainActivity : ComponentActivity() {
             ?.takeIf(BridgeProtocol::isValidPackageName)?.let {
                 pendingGameVisitPackage = it
                 pendingGameVisitForPrepare =
-                    savedInstanceState.getBoolean("pending_game_visit_for_prepare", false)
+                    savedInstanceState?.getBoolean("pending_game_visit_for_prepare", false) == true
                 pendingGameVisitPaused =
-                    savedInstanceState.getBoolean("pending_game_visit_paused", false)
+                    savedInstanceState?.getBoolean("pending_game_visit_paused", false) == true
             }
         refreshFromPrefs(updateStatusMessage = true)
         loadInstalledAppsAsync()
