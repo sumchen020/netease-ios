@@ -851,6 +851,28 @@ private fun StatusFeedbackBanner(
         else -> scheme.onSurfaceVariant
     }
 
+    // Keep the home banner brief. Full failure details remain available on demand.
+    val summary = when {
+        busy -> "正在检测游戏账号并准备…"
+        tone == StatusTone.Success -> "SDK 已响应，请进游戏核对角色"
+        tone == StatusTone.Error -> "准备失败，请查看原因"
+        tone == StatusTone.Warning && (message.contains("SDK") || message.contains("回调") || message.contains("已发送")) ->
+            "SDK 未确认，请进游戏核对角色"
+        message.length > 42 -> "先登录游戏账号，再点击「检测并准备」"
+        else -> message
+    }
+    var showDetails by remember { mutableStateOf(false) }
+    if (showDetails && message != summary) {
+        AlertDialog(
+            onDismissRequest = { showDetails = false },
+            title = { Text("操作详情") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { showDetails = false }) { Text("知道了") }
+            }
+        )
+    }
+
     val containerColor by animateColorAsState(targetBg, tween(250), label = "statusBg")
     val contentColor by animateColorAsState(targetFg, tween(250), label = "statusFg")
 
@@ -886,7 +908,7 @@ private fun StatusFeedbackBanner(
             }
 
             AnimatedContent(
-                targetState = message,
+                targetState = summary,
                 transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
                 label = "statusText",
                 modifier = Modifier.weight(1f)
@@ -897,6 +919,12 @@ private fun StatusFeedbackBanner(
                     fontWeight = FontWeight.Medium,
                     color = contentColor
                 )
+            }
+            if (!busy && message != summary) {
+                TextButton(
+                    onClick = { showDetails = true },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                ) { Text("详情", style = MaterialTheme.typography.labelSmall) }
             }
         }
     }
