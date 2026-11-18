@@ -592,6 +592,8 @@ class MainActivity : ComponentActivity() {
                                     "在 SDK 返回结果前关闭了桥接页，无法确认游戏端是否接受。"
                                 callbackReason == "unrecognized_callback" ->
                                     "收到未知格式的 SDK 回调，无法确认游戏端是否接受。"
+                                callbackReason == "host_timeout" ->
+                                    "桥接会话超时，但文件已写入且 SDK 加载请求已发出；结果仍待游戏内核对。"
                                 else ->
                                     "等待 30 秒未收到可确认的 SDK 回调，不能判断最终登录平台。"
                             }
