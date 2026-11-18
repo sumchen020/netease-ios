@@ -885,7 +885,20 @@ private fun StatusFeedbackBanner(
     // Keep the home banner brief. Full failure details remain available on demand.
     val summary = when {
         busy -> "正在检测游戏账号并准备…"
-        tone == StatusTone.Error -> "准备未完成，请查看原因"
+        tone == StatusTone.Error -> when {
+            message.contains("游戏网页桥未就绪") -> "游戏网页桥未就绪，未完成准备"
+            message.contains("没有收到游戏接口响应") -> "游戏账号接口未响应，未完成准备"
+            message.contains("未读取到已登录") || message.contains("未检测到游戏登录账号") ->
+                "未检测到登录账号，准备未开始"
+            message.contains("无法拉起") -> "无法启动游戏桥接页面"
+            message.contains("SDK 未能读取") -> "SDK 无法读取准备文件"
+            message.contains("SDK 已读取文件") || message.contains("SDK 拒绝") ->
+                "游戏 SDK 未接受准备数据"
+            message.contains("网页桥未能提交") -> "文件已写入，但 SDK 请求未提交"
+            message.contains("目录授权") || message.contains("写入失败") -> "文件准备失败，请查看原因"
+            message.contains("未能完成 iOS 登录准备") -> "游戏桥接超时，请查看原因"
+            else -> "准备未完成，请查看原因"
+        }
         message.startsWith("兼容模式已提交 iOS 登录准备") ->
             "兼容模式已准备，请返回游戏核对角色"
         message.startsWith("已提交 iOS 登录准备") ->
