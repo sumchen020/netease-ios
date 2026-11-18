@@ -115,6 +115,7 @@ data class BridgeUiState(
     val transportMode: SeedTransportMode = SeedTransportMode.STANDARD,
     val nonEmptyToken: Boolean = false,
     val safAuthorized: Boolean = false,
+    val gameReadyConfirmation: Boolean = false,
     val diagnosticEvents: List<String> = emptyList()
 ) {
     val effectiveGameId: String? get() = currentGame?.spec?.gameId ?: detectedGameId
@@ -132,6 +133,8 @@ fun BridgeScreen(
     onAuthorizeSafDirectory: () -> Unit,
     onRevokeSafDirectory: () -> Unit,
     onPrepareIosLogin: () -> Unit,
+    onGameReadyContinue: () -> Unit,
+    onGameReadyCancel: () -> Unit,
     onRefreshDiagnosticLog: () -> Unit,
     onClearDiagnosticLog: () -> Unit
 ) {
@@ -153,6 +156,25 @@ fun BridgeScreen(
             onSelectApp = { app ->
                 onSelectInstalledGame(app)
                 showAppPicker = false
+            }
+        )
+    }
+
+    // The game's own "欢迎进入游戏" banner belongs to another process. We cannot
+    // observe it without intrusive accessibility/screen-capture permission.
+    // User confirmation is only a handoff; the native account preflight remains mandatory.
+    if (state.gameReadyConfirmation) {
+        AlertDialog(
+            onDismissRequest = onGameReadyCancel,
+            title = { Text("确认游戏已进入") },
+            text = {
+                Text("看到「欢迎进入游戏」提示，或已经进入游戏主界面后，点击继续。助手会先检测登录账号，验证通过才准备 iOS 数据。")
+            },
+            confirmButton = {
+                Button(onClick = onGameReadyContinue) { Text("继续检测") }
+            },
+            dismissButton = {
+                TextButton(onClick = onGameReadyCancel) { Text("暂不准备") }
             }
         )
     }
@@ -1429,6 +1451,8 @@ private fun BridgeScreenPreview() {
             onAuthorizeSafDirectory = {},
             onRevokeSafDirectory = {},
             onPrepareIosLogin = {},
+            onGameReadyContinue = {},
+            onGameReadyCancel = {},
             onRefreshDiagnosticLog = {},
             onClearDiagnosticLog = {}
         )
