@@ -8,7 +8,7 @@ internal object BridgePage {
         appLabel: String,
         base: String
     ): String {
-        val guidance = "请返回游戏点「切换账号」重登（若弹窗原本已打开，先点右上角「×」重开）。"
+        val guidance = "返回游戏后，先关闭可能已打开的旧登录弹窗，再使用游戏当前提供的「重新登录」或「切换账号」入口重新登录，并核对区服与角色。"
         val badgeText = escapeHtml("网易 iOS 登录桥接 · $appLabel")
 
         return buildString {
@@ -27,7 +27,7 @@ internal object BridgePage {
             append("<span class=\"badge\">").append(badgeText).append("</span>")
             append("<h2>准备 iOS 登录</h2>")
             append("<p id=\"status\">正在读取当前账号…</p>")
-            append("<div class=\"warn\">回游戏点「切换账号」重登即可；若弹窗此前已打开，请先点右上角「×」重开，切勿直接点旧列表！</div>")
+            append("<div class=\"warn\">若游戏显示「重新登录」而非「切换账号」，请使用实际提供的入口。若已有登录弹窗，请先关闭再重新打开；勿直接选择旧缓存记录。SDK 未确认时不能判定 iOS 登录成功。</div>")
             append("<button onclick=\"window.ntesBridgeClose()\">返回游戏</button>")
             append("</div>")
             append("<script>(function(){console.log=function(){};window.ntesBridgeClose=userClose;")
@@ -38,7 +38,7 @@ internal object BridgePage {
             append("function userClose(){if(importing&&!complete){finishImport(false);return;}closePage();}")
             append("function post(route,j){return fetch(base+route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(j)}).then(function(r){if(!r.ok)throw Error();return r.json();});}")
             append("function fail(reason,text){if(complete)return;complete=true;show(text);post('/failed',{reason:reason}).catch(function(){});}")
-            append("function finishImport(confirmed){if(complete)return;complete=true;show(confirmed?'SDK 已接受登录准备。':'请求已发送，但未收到 SDK 确认，请在游戏中核对结果。');post('/submitted',{confirmed:confirmed}).then(function(){show(").append(quote(guidance)).append(");setTimeout(closePage,250);}).catch(function(){show('请返回游戏核对登录结果。');});}")
+            append("function finishImport(confirmed){if(complete)return;complete=true;show(confirmed?'SDK 已确认加载请求，请回游戏核对角色。':'请求已发送，SDK 未确认是否接受；请回游戏重新登录并核对角色。');post('/submitted',{confirmed:confirmed}).then(function(){show(").append(quote(guidance)).append(");setTimeout(closePage,250);}).catch(function(){show('请求未能确认，请返回游戏核对登录结果。');});}")
             append("function receiveImport(raw){if(complete||!importing)return;try{var j=typeof raw==='string'?JSON.parse(raw):raw;if(!j)return;if(j.errCode===0||j.errCode==='0'){finishImport(true);return;}if(j.errCode!==undefined&&Number(j.errCode)!==0){var m=String(j.errMsg||'');fail(m==='File content is empty'?'sdk_read_failed':m==='No valid login info found'?'sdk_invalid_session':'sdk_rejected','SDK 未接受本次准备，请返回助手查看结果。');}}catch(e){}}")
             append("function receive(raw){if(complete||sending||importing)return;try{var j=typeof raw==='string'?JSON.parse(raw):raw;if(!j||j.executed_methodId!=='gameContextInfo')return;")
             append("sending=true;show('已读取当前账号，正在注入 iOS 登录准备…');post('/prepare',{full:String(j.user_name||''),game:String(j.game_id||''),channel:String(j.app_channel||'')}).then(function(v){")
