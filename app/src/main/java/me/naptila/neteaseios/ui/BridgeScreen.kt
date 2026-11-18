@@ -138,6 +138,7 @@ fun BridgeScreen(
     val dark = isSystemInDarkTheme()
     val scheme = MaterialTheme.colorScheme
     var showAppPicker by remember { mutableStateOf(false) }
+    var showDiagnostics by remember { mutableStateOf(false) }
 
     if (showAppPicker) {
         LaunchedEffect(Unit) { onRefreshApps() }
@@ -202,11 +203,24 @@ fun BridgeScreen(
                     state = state,
                     onApplyNonEmptyToken = onApplyNonEmptyToken
                 )
-                DiagnosticLogCard(
-                    state = state,
-                    onRefresh = onRefreshDiagnosticLog,
-                    onClear = onClearDiagnosticLog
-                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(
+                        onClick = {
+                            showDiagnostics = !showDiagnostics
+                            if (showDiagnostics) onRefreshDiagnosticLog()
+                        },
+                        enabled = state.currentGame != null
+                    ) {
+                        Text(if (showDiagnostics) "收起诊断" else "遇到问题？查看诊断")
+                    }
+                }
+                if (showDiagnostics) {
+                    DiagnosticLogCard(
+                        state = state,
+                        onRefresh = onRefreshDiagnosticLog,
+                        onClear = onClearDiagnosticLog
+                    )
+                }
             }
         }
     }
@@ -898,9 +912,6 @@ private fun PrepareIosCard(
 ) {
     val scheme = MaterialTheme.colorScheme
     val hasGame = state.currentGame != null
-    val warnBg = if (dark) StatusWarningContainerDark else StatusWarningContainerLight
-    val warnFg = if (dark) StatusWarningDark else StatusWarningLight
-
     val borderColor by animateColorAsState(
         targetValue = when {
             state.submittedCurrent -> (if (dark) StatusSuccessDark else StatusSuccessLight).copy(alpha = 0.45f)
@@ -924,18 +935,11 @@ private fun PrepareIosCard(
                 .padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = "准备 iOS 登录",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = scheme.onSurface
-                )
-                Text(
-                    text = "按当前方式准备 iOS 登录数据",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant
-                )
-            }
+            Text(
+                text = "准备 iOS 登录",
+                style = MaterialTheme.typography.titleMedium,
+                color = scheme.onSurface
+            )
 
             var showOptions by remember(state.currentGame?.spec?.packageName) { mutableStateOf(false) }
             val modeName = if (state.transportMode == SeedTransportMode.STANDARD) "标准缓存" else "共享目录"
@@ -1019,37 +1023,9 @@ private fun PrepareIosCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "一键准备 iOS 登录",
+                    text = "检测并准备 iOS 登录",
                     style = MaterialTheme.typography.labelLarge
                 )
-            }
-
-            Surface(
-                shape = RoundedCornerShape(13.dp),
-                color = warnBg,
-                border = BorderStroke(1.dp, warnFg.copy(alpha = 0.4f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(9.dp),
-                    verticalAlignment = Alignment.Top
-                ) {
-                    Icon(
-                        imageVector = AppIcons.Alert,
-                        contentDescription = null,
-                        tint = warnFg,
-                        modifier = Modifier
-                            .padding(top = 2.dp)
-                            .size(17.dp)
-                    )
-                    Text(
-                        text = "如果游戏的登录弹窗已打开，请先关闭再重开。以游戏实际显示的「重新登录」或「切换账号」为准，勿直接点旧缓存记录。",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Medium,
-                        color = warnFg
-                    )
-                }
             }
 
             // Restoring Android roles is unrelated to the iOS compatibility retry;
@@ -1096,7 +1072,7 @@ private fun LoginCompatibilityCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text("登录兼容性设置", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    if (state.nonEmptyToken) "iOS 兼容重试：已开启" else "iOS 兼容重试：默认关闭",
+                    if (state.nonEmptyToken) "非空占位：开" else "非空占位：关",
                     style = MaterialTheme.typography.bodySmall,
                     color = scheme.onSurfaceVariant
                 )
@@ -1105,7 +1081,7 @@ private fun LoginCompatibilityCard(
                 onClick = { showSettings = true },
                 enabled = enabled
             ) {
-                Text("打开设置")
+                Text("设置")
             }
         }
     }
@@ -1115,14 +1091,10 @@ private fun LoginCompatibilityCard(
             onDismissRequest = { showSettings = false },
             title = { Text("登录兼容性设置") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Text(
-                        "当前游戏：「${state.gameDisplayName}」",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Text(
-                        "首次使用请保持关闭，先执行默认 iOS 登录准备并在游戏中重新登录核对角色。若仍进入安卓角色，再开启兼容模式，重新准备 iOS 登录。",
-                        style = MaterialTheme.typography.bodySmall,
+                        "默认准备后仍进入安卓角色，可尝试开启兼容重试。",
+                        style = MaterialTheme.typography.bodyMedium,
                         color = scheme.onSurfaceVariant
                     )
                     Row(
@@ -1130,14 +1102,11 @@ private fun LoginCompatibilityCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("非空占位凭证", style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                "开启后使用非空占位 token 重新生成 iOS 准备数据，尝试兼容部分游戏版本。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = scheme.onSurfaceVariant
-                            )
-                        }
+                        Text(
+                            "非空占位凭证",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.weight(1f)
+                        )
                         Switch(
                             checked = pendingNonEmptyToken,
                             onCheckedChange = { pendingNonEmptyToken = it },
@@ -1145,34 +1114,20 @@ private fun LoginCompatibilityCard(
                         )
                     }
                     Text(
-                        "点击「应用并重试」才会保存选项，立即重新生成 iOS 准备文件并调用游戏 SDK。这不是切回安卓角色的功能；占位 token 也不是有效登录凭证。",
+                        "确认更改后重新执行 iOS 准备；不保证游戏接受。",
                         style = MaterialTheme.typography.bodySmall,
                         color = scheme.onSurfaceVariant
-                    )
-                    Text(
-                        "注意：兼容重试不保证进入 iOS 角色。部分 SDK 可能拒绝该格式；请确保能通过游戏官方入口重新登录原账号。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = scheme.error
                     )
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        val selected = pendingNonEmptyToken
                         showSettings = false
-                        onApplyNonEmptyToken(selected)
+                        if (hasPendingChange) onApplyNonEmptyToken(pendingNonEmptyToken)
                     },
-                    enabled = enabled && hasPendingChange
-                ) {
-                    Text(
-                        when {
-                            !hasPendingChange -> "设置未更改"
-                            pendingNonEmptyToken -> "开启兼容 · 重试 iOS 准备"
-                            else -> "关闭兼容 · 重试 iOS 准备"
-                        }
-                    )
-                }
+                    enabled = enabled
+                ) { Text("确定") }
             },
             dismissButton = {
                 TextButton(onClick = { showSettings = false }) { Text("取消") }
