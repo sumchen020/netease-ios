@@ -34,7 +34,7 @@ class MpayBridgeSession(
 ) : AutoCloseable {
 
     interface Listener {
-        fun onSubmitted(gameId: String, confirmed: Boolean, usedSaf: Boolean)
+        fun onSubmitted(gameId: String, confirmed: Boolean, usedSaf: Boolean, callbackReason: String)
         fun onFailed(message: String)
     }
 
@@ -207,6 +207,12 @@ class MpayBridgeSession(
                                 return@use
                             }
                             val confirmed = input.optBoolean("confirmed", false)
+                            val callbackReason = when {
+                                confirmed -> "sdk_confirmed"
+                                input.optString("reason") == "manual_return" -> "manual_return"
+                                input.optString("reason") == "unrecognized_callback" -> "unrecognized_callback"
+                                else -> "callback_timeout"
+                            }
                             val usedSaf = preparedSeed?.usedSaf == true
                             val gameId = capturedGameId
                             val first = resultDelivered.compareAndSet(false, true)
@@ -220,7 +226,7 @@ class MpayBridgeSession(
                             }
                             reply(socket, 200, "application/json", "{\"ok\":true}")
                             if (first) {
-                                main.post { listener.onSubmitted(gameId, confirmed, usedSaf) }
+                                main.post { listener.onSubmitted(gameId, confirmed, usedSaf, callbackReason) }
                             }
                         }
 
