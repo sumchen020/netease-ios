@@ -1,4 +1,3 @@
-
 name: Build Netease iOS Debug APK
 
 on:
@@ -15,6 +14,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: netease-ios-debug-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -44,10 +47,25 @@ jobs:
       - name: Build Debug APK
         run: bash ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
-      - name: Upload APK
+      - name: Verify APK, signature, package name and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
+          PACKAGE_INFO="$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep '^package:')"
+          echo "$PACKAGE_INFO"
+          [[ "$PACKAGE_INFO" == *"name='me.naptila.neteaseios'"* ]]
+          mkdir -p dist
+          OUTPUT="netease-ios-debug-${GITHUB_RUN_NUMBER}.apk"
+          cp "$APK" "dist/$OUTPUT"
+          (cd dist && sha256sum "$OUTPUT" > "$OUTPUT.sha256")
+
+      - name: Upload APK and checksum
         uses: actions/upload-artifact@v7
         with:
           name: netease-ios-debug-${{ github.run_number }}
-          path: app/build/outputs/apk/debug/*.apk
+          path: dist/*
           if-no-files-found: error
           retention-days: 14
