@@ -903,7 +903,7 @@ private fun PrepareIosCard(
             if (showOptions) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     TransportModeOptionItem(
-                        title = "标准缓存（默认）",
+                        title = "标准缓存（其他网易游戏默认）",
                         description = "适用于光·遇等大多数官服游戏",
                         selected = state.transportMode == SeedTransportMode.STANDARD,
                         enabled = !state.busy,
@@ -911,7 +911,7 @@ private fun PrepareIosCard(
                     )
 
                     TransportModeOptionItem(
-                        title = "共享目录（SAF · 阴阳师适用）",
+                        title = "共享目录（阴阳师默认）",
                         description = "授权 Android/media 写入，适配无缓存接口游戏",
                         selected = state.transportMode == SeedTransportMode.SAF_MEDIA,
                         enabled = !state.busy,
@@ -923,6 +923,8 @@ private fun PrepareIosCard(
 
             // SAF authorization is visible even when advanced mode choices are collapsed.
             if (state.transportMode == SeedTransportMode.SAF_MEDIA) {
+                        Text("目录授权", style = MaterialTheme.typography.titleSmall)
+                        Text("共享目录需要先授权文件夹", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
                         val authToneFg = if (state.safAuthorized) {
                             if (dark) StatusSuccessDark else StatusSuccessLight
                         } else {
