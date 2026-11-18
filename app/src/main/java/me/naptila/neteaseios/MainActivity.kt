@@ -452,7 +452,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 else -> {
-                    message = "先在「$gameName」登录账号，再点下方按钮一键准备。"
+                    message = "请先在「$gameName」登录账号，再点击下方「一键准备 iOS 登录」；完成后回游戏通过「切换账号」重登。"
                     tone = StatusTone.Neutral
                 }
             }
