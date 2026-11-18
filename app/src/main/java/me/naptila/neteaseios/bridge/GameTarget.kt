@@ -21,7 +21,8 @@ data class InstalledGame(
     val versionName: String = "",
     val icon: ImageBitmap? = null,
     val installed: Boolean = false,
-    val isSystemApp: Boolean = false
+    val isSystemApp: Boolean = false,
+    val lastUpdateTime: Long = 0L
 )
 
 data class GameTarget(
@@ -81,7 +82,8 @@ data class GameTarget(
                 versionName = info.versionName ?: "",
                 icon = icon,
                 installed = true,
-                isSystemApp = isSystem
+                isSystemApp = isSystem,
+                lastUpdateTime = info.lastUpdateTime
             )
         }
 
@@ -113,15 +115,16 @@ data class GameTarget(
                 }.getOrNull() ?: pkg
                 val isSystem = appInfo != null &&
                     (appInfo.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0
-                val versionName = runCatching { getPackageInfo(pm, pkg).versionName ?: "" }.getOrDefault("")
+                val info = runCatching { getPackageInfo(pm, pkg) }.getOrNull()
 
                 apps.add(
                     InstalledGame(
                         spec = GameSpec(packageName = pkg, displayName = label),
-                        versionName = versionName,
+                        versionName = info?.versionName.orEmpty(),
                         icon = iconCache.get(pkg),
                         installed = true,
-                        isSystemApp = isSystem
+                        isSystemApp = isSystem,
+                        lastUpdateTime = info?.lastUpdateTime ?: 0L
                     )
                 )
             }

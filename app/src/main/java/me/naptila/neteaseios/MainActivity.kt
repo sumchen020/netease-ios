@@ -2,6 +2,7 @@ package me.naptila.neteaseios
 
 import android.content.pm.PackageManager
 import android.os.Bundle
+import java.util.UUID
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -31,6 +32,8 @@ import me.naptila.neteaseios.ui.theme.NeteaseiosTheme
 class MainActivity : ComponentActivity() {
 
     private var uiState by mutableStateOf(BridgeUiState())
+    private val history by lazy { PreparationHistory(MpayBridgeSession.prefs(this)) }
+    private var activeAttempt: String? = null
     private var session: MpayBridgeSession? = null
     private var directorySpec: GameSpec? = null
     private var resumePrepareAfterGrant: Boolean = false
@@ -45,7 +48,7 @@ class MainActivity : ComponentActivity() {
             val uri = result.data?.data
             if (spec == null || result.resultCode != RESULT_OK || uri == null) {
                 if (shouldResumePrepare) {
-                    complete("未授权目录，本次准备已取消。", StatusTone.Warning)
+                    complete("未授权目录，本次准备已取消。", StatusTone.Warning, result = "cancelled")
                 } else {
                     complete("已取消目录授权。", StatusTone.Neutral)
                 }
@@ -70,7 +73,7 @@ class MainActivity : ComponentActivity() {
                                 showMessage("已保存目录授权，请重新选择目标游戏。", StatusTone.Warning)
                             }
                         } else {
-                            showMessage("已保存「${spec.displayName}」目录授权。", StatusTone.Success)
+                            showMessage("「${spec.displayName}」目录已授权，可以开始准备。", StatusTone.Neutral)
                         }
                     } catch (e: Exception) {
                         val msg = if (e is SeedStorageException) {
@@ -89,11 +92,14 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         MpayBridgeSession.cleanup(this)
+        history.migratePreviousResult()
         val savedGame = loadSavedGameSpec()?.let { GameTarget.inspect(this, it, loadIcon = true) }
 
-        uiState = uiState.copy(currentGame = savedGame)
+        if (history.recentPackages().isEmpty()) savedGame?.let { history.rememberPackage(it.spec.packageName) }
+        uiState = uiState.copy(currentGame = savedGame, recentPackages = history.recentPackages())
         savedInstanceState?.getString("directory_package")?.let { pkg ->
             if (BridgeProtocol.isValidPackageName(pkg)) {
+                activeAttempt = savedInstanceState.getString("directory_attempt")
                 directorySpec = GameSpec(pkg, savedInstanceState.getString("directory_name") ?: pkg)
                 resumePrepareAfterGrant = savedInstanceState.getBoolean("directory_resume_prepare", false)
                 uiState = uiState.copy(busy = true)
@@ -140,6 +146,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         directorySpec?.let {
+            outState.putString("directory_attempt", activeAttempt)
             outState.putString("directory_package", it.packageName)
             outState.putString("directory_name", it.displayName)
             outState.putBoolean("directory_resume_prepare", resumePrepareAfterGrant)
@@ -156,6 +163,7 @@ class MainActivity : ComponentActivity() {
             }
             uiState = uiState.copy(
                 installedApps = apps,
+                confirmedPackages = history.confirmedPackages(apps),
                 loadingApps = false
             )
         }
@@ -164,8 +172,9 @@ class MainActivity : ComponentActivity() {
     private fun selectInstalledGame(game: InstalledGame) {
         if (uiState.busy) return
         val withIcon = GameTarget.inspect(this, game.spec, loadIcon = true)
+        history.rememberPackage(withIcon.spec.packageName)
         persistSelectedSpec(withIcon.spec)
-        uiState = uiState.copy(currentGame = withIcon)
+        uiState = uiState.copy(currentGame = withIcon, recentPackages = history.recentPackages())
         refreshFromPrefs(updateStatusMessage = true)
     }
 
@@ -251,15 +260,17 @@ class MainActivity : ComponentActivity() {
 
     private fun beginPrepare() {
         if (uiState.busy) return
-        val spec = uiState.currentGame?.spec ?: run {
-            showMessage("请先选择目标游戏。", StatusTone.Warning)
-            return
-        }
-
+        val game = uiState.currentGame ?: return
+        val spec = game.spec
+        val attempt = UUID.randomUUID().toString()
+        activeAttempt = attempt
+        history.begin(game, attempt)
         val selectedMode = uiState.transportMode
         val useNonEmptyToken = uiState.nonEmptyToken
         uiState = uiState.copy(
             busy = true,
+            submittedCurrent = false,
+            unconfirmedCurrent = false,
             statusMessage = "正在连接「${spec.displayName}」准备 iOS 登录…",
             statusTone = StatusTone.Neutral
         )
@@ -274,24 +285,26 @@ class MainActivity : ComponentActivity() {
                     nonEmptyToken = useNonEmptyToken,
                     listener = object : MpayBridgeSession.Listener {
                         override fun onSubmitted(gameId: String, confirmed: Boolean, usedSaf: Boolean) {
+                            if (!ownsAttempt(attempt)) return
                             val text = if (confirmed) {
-                                "准备完成，回「${target.appLabel}」点「切换账号」重登即可。"
+                                "登录组件已确认接收。请回「${target.appLabel}」用同一账号重登，核对区服和角色。"
                             } else {
                                 "请求已发送（无独立回调），回「${target.appLabel}」点「切换账号」重登核对即可。"
                             }
                             complete(
+                                result = if (confirmed) "submitted" else "unconfirmed",
                                 text = text,
                                 tone = if (confirmed) StatusTone.Success else StatusTone.Warning
                             )
                         }
 
                         override fun onFailed(message: String) {
-                            complete(text = message, tone = StatusTone.Error)
+                            if (ownsAttempt(attempt)) complete(text = message, tone = StatusTone.Error)
                         }
                     }
                 )
                 runOnUiThread {
-                    if (isFinishing || isDestroyed) {
+                    if (!ownsAttempt(attempt)) {
                         next.close()
                         return@runOnUiThread
                     }
@@ -301,22 +314,24 @@ class MainActivity : ComponentActivity() {
                     next.start()
                 }
             } catch (_: PackageManager.NameNotFoundException) {
-                runOnUiThread { complete("未找到已安装的「${spec.displayName}」。", StatusTone.Error) }
+                runOnUiThread {
+                    if (ownsAttempt(attempt)) complete("未找到已安装的「${spec.displayName}」。", StatusTone.Error)
+                }
             } catch (_: DirectoryAccessRequired) {
                 runOnUiThread {
-                    launchDirectoryPicker(spec, resumePrepare = true)
+                    if (ownsAttempt(attempt)) launchDirectoryPicker(spec, resumePrepare = true)
                 }
             } catch (e: SeedStorageException) {
                 runOnUiThread {
-                    complete(e.message ?: "准备文件通道不可用。", StatusTone.Error)
+                    if (ownsAttempt(attempt)) complete(e.message ?: "准备文件通道不可用。", StatusTone.Error)
                 }
             } catch (_: IllegalStateException) {
                 runOnUiThread {
-                    complete("「${spec.displayName}」不支持此登录方式。", StatusTone.Warning)
+                    if (ownsAttempt(attempt)) complete("「${spec.displayName}」不支持此登录方式。", StatusTone.Warning)
                 }
             } catch (_: Exception) {
                 runOnUiThread {
-                    complete("准备失败，请检查目录授权或剩余空间后重试。", StatusTone.Error)
+                    if (ownsAttempt(attempt)) complete("准备失败，请检查目录授权或剩余空间后重试。", StatusTone.Error)
                 }
             }
         }, "NeteaseBridgeSetup").apply {
@@ -325,7 +340,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun complete(text: String, tone: StatusTone) {
+    private fun ownsAttempt(attempt: String) =
+        !isFinishing && !isDestroyed && activeAttempt == attempt
+
+    private fun complete(text: String, tone: StatusTone, result: String = "failed") {
+        val attempt = activeAttempt
+        val pkg = uiState.currentGame?.spec?.packageName
+        if (attempt != null && pkg != null) {
+            val error = if (result == "failed" || result == "cancelled") text else null
+            if (!history.finish(pkg, attempt, result, error)) {
+                activeAttempt = null
+                session?.close()
+                session = null
+                uiState = uiState.copy(busy = false)
+                refreshFromPrefs(updateStatusMessage = true)
+                return
+            }
+        }
+        activeAttempt = null
         session?.close()
         session = null
         uiState = uiState.copy(busy = false)
@@ -358,11 +390,10 @@ class MainActivity : ComponentActivity() {
         val gameName = current.spec.displayName
         val p = MpayBridgeSession.prefs(this)
         val detectedGid = p.getString("last_game_id_$pkg", null)
-        val stateForCurrentPkg = p.getString("state_package", null) == pkg
-        val state = if (stateForCurrentPkg) (p.getString("state", "") ?: "") else ""
-        val currentOpMatches = p.getString("operation", "new") == p.getString("completed_operation", "old")
-        val submittedCurrent = state == "submitted" && currentOpMatches
-        val unconfirmedCurrent = state == "unconfirmed" && currentOpMatches
+        val state = history.result(pkg)
+        val sameBuild = history.sameBuild(current)
+        val submittedCurrent = sameBuild && state == "submitted"
+        val unconfirmedCurrent = sameBuild && state == "unconfirmed"
         val mode = SeedStorage.getTransportMode(this, pkg)
         val nonEmptyToken = SeedStorage.isNonEmptyTokenEnabled(this, pkg)
         val safAuthorized = SeedStorage.hasValidDirectoryGrant(this, pkg)
@@ -372,19 +403,34 @@ class MainActivity : ComponentActivity() {
 
         if (updateStatusMessage && !uiState.busy) {
             when {
+                !current.installed -> {
+                    message = "「$gameName」已卸载，请重新选择游戏。"
+                    tone = StatusTone.Warning
+                }
+
+                state != null && !sameBuild -> {
+                    val last = when (state) {
+                        "submitted" -> "组件已确认接收"
+                        "unconfirmed" -> "已发送，待核对"
+                        else -> "未完成"
+                    }
+                    message = "上次准备结果：$last。当前安装版本待确认。"
+                    tone = StatusTone.Neutral
+                }
+
                 submittedCurrent -> {
-                    message = "准备完成，回「$gameName」点「切换账号」重登即可。"
+                    message = "上次准备结果：登录组件已确认接收。回「$gameName」用同一账号重登并核对角色。"
                     tone = StatusTone.Success
                 }
 
                 unconfirmedCurrent -> {
-                    message = "请求已发送（无独立回调），回「$gameName」点「切换账号」重登核对即可。"
+                    message = "上次请求已发送，未收到明确回调。请回「$gameName」重登并核对角色。"
                     tone = StatusTone.Warning
                 }
 
-                state == "failed" -> {
-                    message = p.getString("last_error", "操作未完成，请重试。") ?: "操作未完成，请重试。"
-                    tone = StatusTone.Error
+                state == "failed" || state == "cancelled" -> {
+                    message = history.error(pkg) ?: "操作未完成，请重试。"
+                    tone = if (state == "failed") StatusTone.Error else StatusTone.Warning
                 }
 
                 state == "preparing" -> {
@@ -401,6 +447,7 @@ class MainActivity : ComponentActivity() {
 
         uiState = uiState.copy(
             detectedGameId = detectedGid,
+            confirmedPackages = history.confirmedPackages(uiState.installedApps),
             submittedCurrent = submittedCurrent,
             unconfirmedCurrent = unconfirmedCurrent,
             transportMode = mode,

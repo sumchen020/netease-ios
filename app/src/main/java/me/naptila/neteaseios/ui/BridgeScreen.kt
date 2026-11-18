@@ -34,6 +34,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -100,6 +101,8 @@ data class BridgeUiState(
     val currentGame: InstalledGame? = null,
     val installedApps: List<InstalledGame> = emptyList(),
     val loadingApps: Boolean = false,
+    val recentPackages: List<String> = emptyList(),
+    val confirmedPackages: Set<String> = emptySet(),
     val detectedGameId: String? = null,
     val busy: Boolean = false,
     val statusMessage: String = "请先选择目标网易游戏。",
@@ -130,9 +133,12 @@ fun BridgeScreen(
     var showAppPicker by remember { mutableStateOf(false) }
 
     if (showAppPicker) {
+        LaunchedEffect(Unit) { onRefreshApps() }
         InstalledAppPickerDialog(
             currentGame = state.currentGame,
             installedApps = state.installedApps,
+            recentPackages = state.recentPackages,
+            confirmedPackages = state.confirmedPackages,
             loading = state.loadingApps,
             onDismiss = { showAppPicker = false },
             onRefresh = onRefreshApps,
@@ -438,7 +444,7 @@ private fun HeroHeaderCard(
                     )
 
                     val (modeLabel, modeTone) = when {
-                        state.submittedCurrent -> "已准备就绪" to StatusTone.Success
+                        state.submittedCurrent -> "上次已确认" to StatusTone.Success
                         state.unconfirmedCurrent -> "已发送 · 待核对" to StatusTone.Warning
                         state.transportMode == SeedTransportMode.SAF_MEDIA -> {
                             if (state.safAuthorized) "目录已授权" to StatusTone.Success
@@ -524,6 +530,8 @@ private fun AsyncGameAppAvatar(
 private fun InstalledAppPickerDialog(
     currentGame: InstalledGame?,
     installedApps: List<InstalledGame>,
+    recentPackages: List<String>,
+    confirmedPackages: Set<String>,
     loading: Boolean,
     onDismiss: () -> Unit,
     onRefresh: () -> Unit,
@@ -542,6 +550,14 @@ private fun InstalledAppPickerDialog(
                     it.spec.packageName.contains(trimmed, ignoreCase = true)
             }
         }
+    }
+
+    val recentApps = remember(filteredApps, recentPackages) {
+        val matches = filteredApps.associateBy { it.spec.packageName }
+        recentPackages.mapNotNull { matches[it] }
+    }
+    val remainingApps = remember(filteredApps, recentPackages) {
+        filteredApps.filterNot { it.spec.packageName in recentPackages }
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -627,53 +643,17 @@ private fun InstalledAppPickerDialog(
                             .heightIn(max = 360.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(
-                            items = filteredApps,
-                            key = { it.spec.packageName }
-                        ) { item ->
-                            val selected = item.spec.packageName == currentGame?.spec?.packageName
-                            Surface(
-                                shape = RoundedCornerShape(14.dp),
-                                color = if (selected) scheme.primaryContainer.copy(alpha = 0.7f)
-                                else scheme.surfaceVariant.copy(alpha = 0.4f),
-                                border = BorderStroke(
-                                    width = if (selected) 1.5.dp else 1.dp,
-                                    color = if (selected) scheme.primary else scheme.outlineVariant
-                                ),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .clickable { onSelectApp(item) }
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    AsyncGameAppAvatar(
-                                        packageName = item.spec.packageName,
-                                        cachedIcon = item.icon,
-                                        size = 38
-                                    )
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = item.spec.displayName,
-                                            style = MaterialTheme.typography.titleSmall,
-                                            color = scheme.onSurface,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = item.spec.packageName,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = scheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    SelectionIndicator(selected = selected)
-                                }
+                        if (recentApps.isNotEmpty()) {
+                            item { Text("最近使用", style = MaterialTheme.typography.labelMedium) }
+                            items(recentApps, key = { it.spec.packageName }) { app ->
+                                InstalledAppRow(app, currentGame, app.spec.packageName in confirmedPackages, onSelectApp)
                             }
+                            if (remainingApps.isNotEmpty()) {
+                                item { Text("其他已安装应用", style = MaterialTheme.typography.labelMedium) }
+                            }
+                        }
+                        items(remainingApps, key = { it.spec.packageName }) { app ->
+                            InstalledAppRow(app, currentGame, false, onSelectApp)
                         }
                     }
                 }
@@ -687,6 +667,62 @@ private fun InstalledAppPickerDialog(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun InstalledAppRow(
+    item: InstalledGame,
+    currentGame: InstalledGame?,
+    confirmed: Boolean,
+    onSelectApp: (InstalledGame) -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    val selected = item.spec.packageName == currentGame?.spec?.packageName
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = if (selected) scheme.primaryContainer.copy(alpha = 0.7f)
+        else scheme.surfaceVariant.copy(alpha = 0.4f),
+        border = BorderStroke(
+            width = if (selected) 1.5.dp else 1.dp,
+            color = if (selected) scheme.primary else scheme.outlineVariant
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable { onSelectApp(item) }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            AsyncGameAppAvatar(
+                packageName = item.spec.packageName,
+                cachedIcon = item.icon,
+                size = 38
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = item.spec.displayName,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = scheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (confirmed) {
+                    Text("上次准备已确认", style = MaterialTheme.typography.labelSmall, color = scheme.primary)
+                }
+                Text(
+                    text = item.spec.packageName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            SelectionIndicator(selected = selected)
         }
     }
 }
@@ -857,111 +893,121 @@ private fun PrepareIosCard(
                 )
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                TransportModeOptionItem(
-                    title = "标准缓存（默认）",
-                    description = "适用于光·遇等大多数官服游戏",
-                    selected = state.transportMode == SeedTransportMode.STANDARD,
-                    enabled = !state.busy,
-                    onClick = { onSelectTransportMode(SeedTransportMode.STANDARD) }
-                )
+            var showOptions by remember(state.currentGame?.spec?.packageName) { mutableStateOf(false) }
+            val modeName = if (state.transportMode == SeedTransportMode.STANDARD) "标准缓存" else "共享目录"
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("当前方式：$modeName", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                TextButton(onClick = { showOptions = !showOptions }, enabled = !state.busy && hasGame) {
+                    Text(if (showOptions) "收起" else "更改")
+                }
+            }
+            if (showOptions) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TransportModeOptionItem(
+                        title = "标准缓存（默认）",
+                        description = "适用于光·遇等大多数官服游戏",
+                        selected = state.transportMode == SeedTransportMode.STANDARD,
+                        enabled = !state.busy,
+                        onClick = { onSelectTransportMode(SeedTransportMode.STANDARD) }
+                    )
 
-                TransportModeOptionItem(
-                    title = "共享目录（SAF · 阴阳师适用）",
-                    description = "授权 Android/media 写入，适配无缓存接口游戏",
-                    selected = state.transportMode == SeedTransportMode.SAF_MEDIA,
-                    enabled = !state.busy,
-                    onClick = { onSelectTransportMode(SeedTransportMode.SAF_MEDIA) }
-                )
+                    TransportModeOptionItem(
+                        title = "共享目录（SAF · 阴阳师适用）",
+                        description = "授权 Android/media 写入，适配无缓存接口游戏",
+                        selected = state.transportMode == SeedTransportMode.SAF_MEDIA,
+                        enabled = !state.busy,
+                        onClick = { onSelectTransportMode(SeedTransportMode.SAF_MEDIA) }
+                    )
 
-                if (state.transportMode == SeedTransportMode.SAF_MEDIA) {
-                    val authToneFg = if (state.safAuthorized) {
-                        if (dark) StatusSuccessDark else StatusSuccessLight
-                    } else {
-                        scheme.onSurfaceVariant
-                    }
-                    Surface(
-                        shape = RoundedCornerShape(13.dp),
-                        color = scheme.surfaceVariant.copy(alpha = if (dark) 0.5f else 0.65f),
-                        border = BorderStroke(1.dp, scheme.outlineVariant),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    if (state.transportMode == SeedTransportMode.SAF_MEDIA) {
+                        val authToneFg = if (state.safAuthorized) {
+                            if (dark) StatusSuccessDark else StatusSuccessLight
+                        } else {
+                            scheme.onSurfaceVariant
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(13.dp),
+                            color = scheme.surfaceVariant.copy(alpha = if (dark) 0.5f else 0.65f),
+                            border = BorderStroke(1.dp, scheme.outlineVariant),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(
-                                imageVector = AppIcons.Folder,
-                                contentDescription = null,
-                                tint = authToneFg,
-                                modifier = Modifier.size(17.dp)
-                            )
-                            Text(
-                                text = if (state.safAuthorized) "已授权 Android/media" else "待授权 Android/media",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = authToneFg,
-                                modifier = Modifier.weight(1f)
-                            )
-                            TextButton(
-                                onClick = onAuthorizeSafDirectory,
-                                enabled = !state.busy,
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                            Row(
+                                modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text(
-                                    text = if (state.safAuthorized) "更换" else "授权",
-                                    style = MaterialTheme.typography.labelMedium
+                                Icon(
+                                    imageVector = AppIcons.Folder,
+                                    contentDescription = null,
+                                    tint = authToneFg,
+                                    modifier = Modifier.size(17.dp)
                                 )
+                                Text(
+                                    text = if (state.safAuthorized) "已授权 Android/media" else "待授权 Android/media",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = authToneFg,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(
+                                    onClick = onAuthorizeSafDirectory,
+                                    enabled = !state.busy,
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = if (state.safAuthorized) "更换" else "授权",
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                }
                             }
                         }
                     }
-                }
 
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = if (state.nonEmptyToken) scheme.primaryContainer.copy(alpha = 0.55f)
-                    else scheme.surfaceVariant.copy(alpha = 0.38f),
-                    border = BorderStroke(
-                        width = if (state.nonEmptyToken) 1.4.dp else 1.dp,
-                        color = if (state.nonEmptyToken) scheme.primary else scheme.outlineVariant
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable(enabled = !state.busy) { onToggleNonEmptyToken(!state.nonEmptyToken) }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (state.nonEmptyToken) scheme.primaryContainer.copy(alpha = 0.55f)
+                        else scheme.surfaceVariant.copy(alpha = 0.38f),
+                        border = BorderStroke(
+                            width = if (state.nonEmptyToken) 1.4.dp else 1.dp,
+                            color = if (state.nonEmptyToken) scheme.primary else scheme.outlineVariant
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable(enabled = !state.busy) { onToggleNonEmptyToken(!state.nonEmptyToken) }
                     ) {
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(1.dp)
+                        Row(
+                            modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Text(
-                                text = "非空占位凭证（新版阴阳师适用）",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = scheme.onSurface
-                            )
-                            Text(
-                                text = "默认关闭；仅在准备后重登仍是安卓号时开启",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = scheme.onSurfaceVariant
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(1.dp)
+                            ) {
+                                Text(
+                                    text = "非空占位凭证（新版阴阳师适用）",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = scheme.onSurface
+                                )
+                                Text(
+                                    text = "默认关闭；仅在准备后重登仍是安卓号时开启",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = scheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = state.nonEmptyToken,
+                                onCheckedChange = null,
+                                enabled = !state.busy
                             )
                         }
-                        Switch(
-                            checked = state.nonEmptyToken,
-                            onCheckedChange = null,
-                            enabled = !state.busy
-                        )
                     }
                 }
             }
 
             Button(
                 onClick = onPrepareIosLogin,
-                enabled = !state.busy,
+                enabled = !state.busy && (state.currentGame?.installed != false),
                 shape = RoundedCornerShape(15.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = scheme.primary),
                 contentPadding = PaddingValues(vertical = 15.dp, horizontal = 20.dp),
@@ -1007,24 +1053,15 @@ private fun PrepareIosCard(
                 }
             }
 
-            Surface(
-                shape = RoundedCornerShape(13.dp),
-                color = scheme.surfaceVariant.copy(alpha = if (dark) 0.45f else 0.6f),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = "• 切号后若变回安卓号：在「切换账号」里再点登一次即恢复 iOS。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = scheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "• 想切回安卓角色：在「切换账号」列表删掉该账号记录后重登。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = scheme.onSurfaceVariant
+            if (!state.busy && state.submittedCurrent) {
+                var showGuide by remember(state.currentGame?.spec?.packageName) { mutableStateOf(false) }
+                TextButton(onClick = { showGuide = true }) { Text("如何切回安卓角色") }
+                if (showGuide) {
+                    AlertDialog(
+                        onDismissRequest = { showGuide = false },
+                        title = { Text("如何切回安卓角色") },
+                        text = { Text("先确认你能用原账号重新登录。回到「${state.gameDisplayName}」，在「切换账号」列表移除本机保存的这条登录记录，再用同一账号登录。进入游戏后核对区服和角色。") },
+                        confirmButton = { TextButton(onClick = { showGuide = false }) { Text("知道了") } }
                     )
                 }
             }
