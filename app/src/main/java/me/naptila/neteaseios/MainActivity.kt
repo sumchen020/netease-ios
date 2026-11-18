@@ -311,7 +311,7 @@ class MainActivity : ComponentActivity() {
                                 callbackReason == "unrecognized_callback" ->
                                     "收到了 SDK 回调，但格式不符合当前解析规则，结果未知，需要适配回调格式。"
                                 else ->
-                                    "等待 12 秒仍未收到 SDK 回调，结果未知；不能判定 iOS 登录成功。"
+                                    "等待 30 秒仍未收到 SDK 回调，结果未知；不能判定 iOS 登录成功。"
                             }
                             val text = "$localWrite$status 请回「${target.appLabel}」使用实际显示的登录入口核对区服与角色。"
                             complete(
