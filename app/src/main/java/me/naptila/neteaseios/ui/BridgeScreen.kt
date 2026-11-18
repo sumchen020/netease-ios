@@ -116,6 +116,7 @@ data class BridgeUiState(
     val nonEmptyToken: Boolean = false,
     val safAuthorized: Boolean = false,
     val gameReadyConfirmation: Boolean = false,
+    val overlayPermissionExplanation: Boolean = false,
     val diagnosticEvents: List<String> = emptyList()
 ) {
     val effectiveGameId: String? get() = currentGame?.spec?.gameId ?: detectedGameId
@@ -135,6 +136,8 @@ fun BridgeScreen(
     onPrepareIosLogin: () -> Unit,
     onGameReadyContinue: () -> Unit,
     onGameReadyCancel: () -> Unit,
+    onOverlayPermissionRequest: () -> Unit,
+    onOverlayPermissionSkip: () -> Unit,
     onRefreshDiagnosticLog: () -> Unit,
     onClearDiagnosticLog: () -> Unit
 ) {
@@ -160,6 +163,22 @@ fun BridgeScreen(
         )
     }
 
+    if (state.overlayPermissionExplanation) {
+        AlertDialog(
+            onDismissRequest = onOverlayPermissionSkip,
+            title = { Text("游戏内确认浮窗") },
+            text = {
+                Text("首次使用需授权「显示在其他应用上层」，才能在游戏界面显示小窗口。也可跳过，返回助手确认。")
+            },
+            confirmButton = {
+                Button(onClick = onOverlayPermissionRequest) { Text("前往授权") }
+            },
+            dismissButton = {
+                TextButton(onClick = onOverlayPermissionSkip) { Text("暂不授权") }
+            }
+        )
+    }
+
     // The game's own "欢迎进入游戏" banner belongs to another process. We cannot
     // observe it without intrusive accessibility/screen-capture permission.
     // User confirmation is only a handoff; the native account preflight remains mandatory.
@@ -168,10 +187,10 @@ fun BridgeScreen(
             onDismissRequest = onGameReadyCancel,
             title = { Text("确认游戏已进入") },
             text = {
-                Text("看到「欢迎进入游戏」提示，或已经进入游戏主界面后，点击继续。助手会先检测登录账号，验证通过才准备 iOS 数据。")
+                Text("已看到欢迎提示或进入游戏主页？确认后将检查账号，再准备 iOS 数据。")
             },
             confirmButton = {
-                Button(onClick = onGameReadyContinue) { Text("继续检测") }
+                Button(onClick = onGameReadyContinue) { Text("确定") }
             },
             dismissButton = {
                 TextButton(onClick = onGameReadyCancel) { Text("暂不准备") }
@@ -1453,6 +1472,8 @@ private fun BridgeScreenPreview() {
             onPrepareIosLogin = {},
             onGameReadyContinue = {},
             onGameReadyCancel = {},
+            onOverlayPermissionRequest = {},
+            onOverlayPermissionSkip = {},
             onRefreshDiagnosticLog = {},
             onClearDiagnosticLog = {}
         )
