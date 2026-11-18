@@ -145,6 +145,19 @@ fun BridgeScreen(
     val scheme = MaterialTheme.colorScheme
     var showAppPicker by remember { mutableStateOf(false) }
     var showDiagnostics by remember { mutableStateOf(false) }
+    var showHelp by remember { mutableStateOf(false) }
+
+    if (showHelp) {
+        HelpDialog(
+            onDismiss = { showHelp = false },
+            onOpenDiagnostics = {
+                showHelp = false
+                showDiagnostics = true
+                onRefreshDiagnosticLog()
+            },
+            diagnosticsAvailable = state.currentGame != null
+        )
+    }
 
     if (showAppPicker) {
         LaunchedEffect(Unit) { onRefreshApps() }
@@ -185,9 +198,9 @@ fun BridgeScreen(
     if (state.gameReadyConfirmation) {
         AlertDialog(
             onDismissRequest = onGameReadyCancel,
-            title = { Text("确认游戏已进入") },
+            title = { Text("确认游戏登录状态") },
             text = {
-                Text("已看到欢迎提示或进入游戏主页？确认后将检查账号，再准备 iOS 数据。")
+                Text("已看到「欢迎进入游戏」提示，或已登录游戏账号？")
             },
             confirmButton = {
                 Button(onClick = onGameReadyContinue) { Text("确定") }
@@ -222,6 +235,7 @@ fun BridgeScreen(
                     state = state,
                     dark = dark,
                     onShowPicker = { showAppPicker = true },
+                    onOpenHelp = { showHelp = true },
                     onOpenGame = onOpenGame,
                     onRevokeSafDirectory = onRevokeSafDirectory
                 )
@@ -244,18 +258,10 @@ fun BridgeScreen(
                     state = state,
                     onApplyNonEmptyToken = onApplyNonEmptyToken
                 )
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(
-                        onClick = {
-                            showDiagnostics = !showDiagnostics
-                            if (showDiagnostics) onRefreshDiagnosticLog()
-                        },
-                        enabled = state.currentGame != null
-                    ) {
-                        Text(if (showDiagnostics) "收起诊断" else "遇到问题？查看诊断")
-                    }
-                }
                 if (showDiagnostics) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { showDiagnostics = false }) { Text("收起诊断") }
+                    }
                     DiagnosticLogCard(
                         state = state,
                         onRefresh = onRefreshDiagnosticLog,
@@ -298,11 +304,11 @@ private fun HeroHeaderCard(
     state: BridgeUiState,
     dark: Boolean,
     onShowPicker: () -> Unit,
+    onOpenHelp: () -> Unit,
     onOpenGame: () -> Unit,
     onRevokeSafDirectory: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
-    val uriHandler = LocalUriHandler.current
     val gradientColors = if (dark) {
         listOf(Color(0xFF182949), Color(0xFF131F36))
     } else {
@@ -343,8 +349,8 @@ private fun HeroHeaderCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(Brush.linearGradient(gradientColors))
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -368,7 +374,7 @@ private fun HeroHeaderCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "网易游戏 iOS 登录",
-                        style = MaterialTheme.typography.headlineSmall,
+                        style = MaterialTheme.typography.titleLarge,
                         color = scheme.onSurface
                     )
                     Text(
@@ -377,33 +383,17 @@ private fun HeroHeaderCard(
                         color = scheme.onSurfaceVariant
                     )
                 }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                HeaderLinkChip(
-                    icon = AppIcons.GitHub,
-                    label = "GitHub",
-                    accentColor = scheme.primary,
-                    dark = dark,
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        runCatching { uriHandler.openUri("https://github.com/Naptila/netease-ios") }
-                    }
-                )
-                HeaderLinkChip(
-                    icon = AppIcons.Bilibili,
-                    label = "BiliBili",
-                    accentColor = if (dark) Color(0xFFFF85AD) else Color(0xFFE0487B),
-                    dark = dark,
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        runCatching { uriHandler.openUri("https://space.bilibili.com/330170655") }
-                    }
-                )
+                IconButton(
+                    onClick = onOpenHelp,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = AppIcons.Info,
+                        contentDescription = "使用说明",
+                        tint = scheme.primary,
+                        modifier = Modifier.size(25.dp)
+                    )
+                }
             }
 
             Surface(
@@ -895,8 +885,12 @@ private fun StatusFeedbackBanner(
     // Keep the home banner brief. Full failure details remain available on demand.
     val summary = when {
         busy -> "正在检测游戏账号并准备…"
-        tone == StatusTone.Success -> "SDK 已响应，请进游戏核对角色"
-        tone == StatusTone.Error -> "准备失败，请查看原因"
+        tone == StatusTone.Error -> "准备未完成，请查看原因"
+        message.startsWith("兼容模式已提交 iOS 登录准备") ->
+            "兼容模式已准备，请返回游戏核对角色"
+        message.startsWith("已提交 iOS 登录准备") ->
+            "已准备 iOS 登录，请返回游戏核对角色"
+        tone == StatusTone.Success -> "游戏 SDK 已确认请求，待核对角色"
         tone == StatusTone.Warning && (message.contains("SDK") || message.contains("回调") || message.contains("已发送")) ->
             "SDK 未确认，请进游戏核对角色"
         message.length > 42 -> "先登录游戏账号，再点击「检测并准备」"
