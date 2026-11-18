@@ -48,6 +48,7 @@ class MpayBridgeSession(
     private val appContext: Context = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val resultDelivered = AtomicBoolean(false)
+    private val loadDispatched = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
     private val server: ServerSocket
     private val nonce: String
@@ -95,7 +96,16 @@ class MpayBridgeSession(
         main.postDelayed({
             if (closed.get()) return@postDelayed
             if (!resultDelivered.get()) {
-                fail("未能完成 iOS 登录准备，请先确保已在「${target.appLabel}」正常登录账号后再重试。")
+                if (preparedSeed != null && loadDispatched.get()) {
+                    // The game WebView may suspend JavaScript timers while backgrounded.
+                    // A native watchdog timeout is NOT proof that file writing or
+                    // dispatch failed. Preserve the submitted / unconfirmed outcome.
+                    deliverSubmission(false, "host_timeout")
+                } else if (preparedSeed != null) {
+                    fail("准备文件已写入，但未确认游戏网页桥发出 SDK 加载请求。请查看诊断日志。")
+                } else {
+                    fail("游戏账号检查或文件准备未完成，请查看诊断日志。")
+                }
             }
             close()
         }, 45_000L)
@@ -265,6 +275,9 @@ class MpayBridgeSession(
                             if (event == null || preparedSeed == null) {
                                 reply(socket, 400, "application/json", "{\"ok\":false}")
                             } else {
+                                if (event == BridgeLogEvent.LOAD_DISPATCHED) {
+                                    loadDispatched.set(true)
+                                }
                                 BridgeDiagnosticLog.record(appContext, target.spec.packageName, event)
                                 reply(socket, 200, "application/json", "{\"ok\":true}")
                             }
@@ -282,29 +295,22 @@ class MpayBridgeSession(
                                 input.optString("reason") == "unrecognized_callback" -> "unrecognized_callback"
                                 else -> "callback_timeout"
                             }
-                            val usedSaf = preparedSeed?.usedSaf == true
-                            val gameId = capturedGameId
-                            val first = resultDelivered.compareAndSet(false, true)
-                            if (first) {
-                                BridgeDiagnosticLog.record(
-                                    appContext, target.spec.packageName,
-                                    when {
-                                        confirmed -> BridgeLogEvent.SDK_CONFIRMED
-                                        callbackReason == "manual_return" -> BridgeLogEvent.USER_LEFT_EARLY
-                                        callbackReason == "unrecognized_callback" -> BridgeLogEvent.SDK_UNKNOWN_CALLBACK
-                                        else -> BridgeLogEvent.SDK_TIMEOUT
-                                    }
-                                )
-                                unconfirmedCleanupDeferred = !confirmed
-                                prefs(appContext).edit()
-                                    .putString("state", if (confirmed) "submitted" else "unconfirmed")
-                                    .putString("state_package", target.spec.packageName)
-                                    .putString("completed_operation", nonce)
-                                    .apply()
-                            }
+                            deliverSubmission(confirmed, callbackReason)
                             reply(socket, 200, "application/json", "{\"ok\":true}")
-                            if (first) {
-                                main.post { listener.onSubmitted(gameId, confirmed, usedSaf, callbackReason) }
+                        }
+
+                        "/return-assistant" -> {
+                            reply(socket, 200, "application/json", "{\"ok\":true}")
+                            main.post {
+                                val launch = appContext.packageManager.getLaunchIntentForPackage(appContext.packageName)
+                                if (launch != null) {
+                                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
+                                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                                        Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                                    // Android may block a background Activity launch even
+                                    // without throwing; callers offer manual fallback.
+                                    runCatching { appContext.startActivity(launch) }
+                                }
                             }
                         }
 
@@ -391,6 +397,30 @@ class MpayBridgeSession(
         val cleanupUri = seed.cleanupUri.toString()
         main.postDelayed({ SeedStorage.deleteAsync(appContext, cleanupUri) }, 45_000L)
         return seed
+    }
+
+    private fun deliverSubmission(confirmed: Boolean, callbackReason: String): Boolean {
+        val seed = preparedSeed ?: return false
+        if (!resultDelivered.compareAndSet(false, true)) return false
+        BridgeDiagnosticLog.record(
+            appContext, target.spec.packageName,
+            when {
+                confirmed -> BridgeLogEvent.SDK_CONFIRMED
+                callbackReason == "manual_return" -> BridgeLogEvent.USER_LEFT_EARLY
+                callbackReason == "unrecognized_callback" -> BridgeLogEvent.SDK_UNKNOWN_CALLBACK
+                else -> BridgeLogEvent.SDK_TIMEOUT
+            }
+        )
+        unconfirmedCleanupDeferred = !confirmed
+        prefs(appContext).edit()
+            .putString("state", if (confirmed) "submitted" else "unconfirmed")
+            .putString("state_package", target.spec.packageName)
+            .putString("completed_operation", nonce)
+            .apply()
+        main.post {
+            listener.onSubmitted(capturedGameId, confirmed, seed.usedSaf, callbackReason)
+        }
+        return true
     }
 
     private fun fail(message: String) {
