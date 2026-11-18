@@ -54,6 +54,7 @@ class MainActivity : ComponentActivity() {
     private var lastReturnedGameTimeMs: Long = 0L
     private var gameReadyOverlay: GameReadyOverlay? = null
     private var pendingOverlayPermissionPackage: String? = null
+    private var launchGameAfterOverlaySettings: GameSpec? = null
 
     private val overlayPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -61,7 +62,9 @@ class MainActivity : ComponentActivity() {
             pendingOverlayPermissionPackage = null
             val game = uiState.currentGame
             if (expected != null && game?.spec?.packageName == expected && !uiState.busy) {
-                launchGameForVisit(game.spec, forPrepare = true)
+                // Activity-result delivery can precede onResume. Wait until the
+                // helper is resumed before opening the game and showing overlay.
+                launchGameAfterOverlaySettings = game.spec
             }
         }
 
@@ -205,6 +208,15 @@ class MainActivity : ComponentActivity() {
                 if (shouldPrepare) {
                     uiState = uiState.copy(gameReadyConfirmation = true)
                     showMessage("请确认已进入游戏，再继续检测账号。", StatusTone.Neutral)
+                }
+            }
+        }
+        launchGameAfterOverlaySettings?.let { next ->
+            launchGameAfterOverlaySettings = null
+            window.decorView.post {
+                if (!isFinishing && !isDestroyed &&
+                    uiState.currentGame?.spec?.packageName == next.packageName && !uiState.busy) {
+                    launchGameForVisit(next, forPrepare = true)
                 }
             }
         }
