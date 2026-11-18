@@ -507,7 +507,8 @@ class MainActivity : ComponentActivity() {
         // In the no-overlay flow the user has returned to this assistant,
         // which placed the game in the background. Resume the selected game
         // first, then run the same game-side account check and MPay bridge.
-        if (!GameTarget.open(this, spec.packageName)) {
+        val opened = runCatching { GameTarget.open(this, spec.packageName) }.getOrDefault(false)
+        if (!opened) {
             showMessage("无法重新打开「${spec.displayName}」，本次未启动桥接。", StatusTone.Error)
             return
         }
