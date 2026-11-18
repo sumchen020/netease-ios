@@ -427,6 +427,9 @@ class MainActivity : ComponentActivity() {
             showMessage("无法打开「${spec.displayName}」，请手动启动游戏。", StatusTone.Warning)
             return
         }
+        if (forPrepare) {
+            BridgeDiagnosticLog.record(this, spec.packageName, BridgeLogEvent.GAME_LAUNCH_SENT)
+        }
         if (forPrepare && Settings.canDrawOverlays(this)) {
             val overlay = GameReadyOverlay(
                 activity = this,
@@ -435,9 +438,14 @@ class MainActivity : ComponentActivity() {
             )
             if (overlay.show()) {
                 gameReadyOverlay = overlay
+                BridgeDiagnosticLog.record(this, spec.packageName, BridgeLogEvent.OVERLAY_DISPLAYED)
+            } else {
+                BridgeDiagnosticLog.record(this, spec.packageName, BridgeLogEvent.OVERLAY_FALLBACK)
             }
             // On a device that suppresses overlays for this game, the existing
             // return-to-assistant dialog stays available as a fallback.
+        } else if (forPrepare) {
+            BridgeDiagnosticLog.record(this, spec.packageName, BridgeLogEvent.OVERLAY_FALLBACK)
         }
     }
 
@@ -451,6 +459,7 @@ class MainActivity : ComponentActivity() {
         pendingGameVisitPaused = false
         lastReturnedGamePackage = packageName
         lastReturnedGameTimeMs = SystemClock.elapsedRealtime()
+        BridgeDiagnosticLog.record(this, packageName, BridgeLogEvent.OVERLAY_CONFIRMED)
         beginPrepare()
     }
 
@@ -492,6 +501,8 @@ class MainActivity : ComponentActivity() {
 
     private fun confirmGameReadyAndPrepare() {
         if (!uiState.gameReadyConfirmation || uiState.busy) return
+        val pkg = uiState.currentGame?.spec?.packageName ?: return
+        BridgeDiagnosticLog.record(this, pkg, BridgeLogEvent.ASSISTANT_CONFIRMED)
         uiState = uiState.copy(gameReadyConfirmation = false)
         beginPrepare()
     }
