@@ -116,7 +116,7 @@ class MainActivity : ComponentActivity() {
                     onSelectInstalledGame = ::selectInstalledGame,
                     onRefreshApps = ::loadInstalledAppsAsync,
                     onSelectTransportMode = ::selectTransportMode,
-                    onToggleNonEmptyToken = ::toggleNonEmptyToken,
+                    onApplyNonEmptyToken = ::applyNonEmptyTokenAndPrepare,
                     onAuthorizeSafDirectory = ::authorizeCurrentGameDirectory,
                     onPrepareIosLogin = ::beginPrepare
                 )
@@ -190,13 +190,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun toggleNonEmptyToken(enabled: Boolean) {
+    /**
+     * The compatibility preference is committed only on explicit confirmation.
+     * Re-run the bridge after saving: prior game login sessions cannot be retroactively changed.
+     * SAF grants are still checked by the existing beginPrepare flow.
+     */
+    private fun applyNonEmptyTokenAndPrepare(enabled: Boolean) {
         if (uiState.busy) return
-        val pkg = uiState.currentGame?.spec?.packageName
-        if (pkg != null) {
-            SeedStorage.setNonEmptyTokenEnabled(this, pkg, enabled)
+        val game = uiState.currentGame ?: run {
+            showMessage("请先选择目标网易游戏。", StatusTone.Warning)
+            return
         }
+        if (!game.installed) {
+            showMessage("目标游戏未安装，无法应用兼容性设置。", StatusTone.Warning)
+            return
+        }
+        SeedStorage.setNonEmptyTokenEnabled(this, game.spec.packageName, enabled)
         uiState = uiState.copy(nonEmptyToken = enabled)
+        beginPrepare()
     }
 
     private fun authorizeCurrentGameDirectory() {
