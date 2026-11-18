@@ -188,12 +188,12 @@ fun BridgeScreen(
                     dark = dark,
                     onSelectTransportMode = onSelectTransportMode,
                     onToggleNonEmptyToken = onToggleNonEmptyToken,
-                    onAuthorizeSafDirectory = {
-                        if (state.currentGame == null) showAppPicker = true else onAuthorizeSafDirectory()
-                    },
-                    onPrepareIosLogin = {
-                        if (state.currentGame == null) showAppPicker = true else onPrepareIosLogin()
-                    }
+                    onAuthorizeSafDirectory = onAuthorizeSafDirectory,
+                    onPrepareIosLogin = onPrepareIosLogin
+                )
+                AndroidLoginCompatibilityCard(
+                    state = state,
+                    onToggleNonEmptyToken = onToggleNonEmptyToken
                 )
             }
         }
@@ -580,12 +580,12 @@ private fun InstalledAppPickerDialog(
                 ) {
                     Column {
                         Text(
-                            text = "选择已安装的应用",
+                            text = "选择网易游戏",
                             style = MaterialTheme.typography.titleMedium,
                             color = scheme.onSurface
                         )
                         Text(
-                            text = "选择要登录 iOS 角色的网易游戏",
+                            text = "仅显示本机已安装的 com.netease.* 应用",
                             style = MaterialTheme.typography.bodySmall,
                             color = scheme.onSurfaceVariant
                         )
@@ -630,7 +630,7 @@ private fun InstalledAppPickerDialog(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            text = if (loading) "正在读取本机已安装应用…" else "没有找到匹配的应用。",
+                            text = if (loading) "正在读取网易游戏…" else "没有找到匹配的网易游戏。",
                             style = MaterialTheme.typography.bodySmall,
                             color = scheme.onSurfaceVariant,
                             modifier = Modifier.padding(16.dp)
@@ -848,7 +848,6 @@ private fun PrepareIosCard(
     state: BridgeUiState,
     dark: Boolean,
     onSelectTransportMode: (SeedTransportMode) -> Unit,
-    onToggleNonEmptyToken: (Boolean) -> Unit,
     onAuthorizeSafDirectory: () -> Unit,
     onPrepareIosLogin: () -> Unit
 ) {
@@ -919,7 +918,11 @@ private fun PrepareIosCard(
                         onClick = { onSelectTransportMode(SeedTransportMode.SAF_MEDIA) }
                     )
 
-                    if (state.transportMode == SeedTransportMode.SAF_MEDIA) {
+                }
+            }
+
+            // SAF authorization is visible even when advanced mode choices are collapsed.
+            if (state.transportMode == SeedTransportMode.SAF_MEDIA) {
                         val authToneFg = if (state.safAuthorized) {
                             if (dark) StatusSuccessDark else StatusSuccessLight
                         } else {
@@ -962,52 +965,14 @@ private fun PrepareIosCard(
                         }
                     }
 
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (state.nonEmptyToken) scheme.primaryContainer.copy(alpha = 0.55f)
-                        else scheme.surfaceVariant.copy(alpha = 0.38f),
-                        border = BorderStroke(
-                            width = if (state.nonEmptyToken) 1.4.dp else 1.dp,
-                            color = if (state.nonEmptyToken) scheme.primary else scheme.outlineVariant
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .clickable(enabled = !state.busy) { onToggleNonEmptyToken(!state.nonEmptyToken) }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(1.dp)
-                            ) {
-                                Text(
-                                    text = "非空占位凭证（新版阴阳师适用）",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = scheme.onSurface
-                                )
-                                Text(
-                                    text = "默认关闭；仅在准备后重登仍是安卓号时开启",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = scheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = state.nonEmptyToken,
-                                onCheckedChange = null,
-                                enabled = !state.busy
-                            )
-                        }
-                    }
-                }
+            if (!hasGame) {
+                Text("请先在上方选择目标网易游戏。", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
             }
 
             Button(
                 onClick = onPrepareIosLogin,
-                enabled = !state.busy && (state.currentGame?.installed != false),
+                enabled = !state.busy && state.currentGame?.installed == true &&
+                    (state.transportMode != SeedTransportMode.SAF_MEDIA || state.safAuthorized),
                 shape = RoundedCornerShape(15.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = scheme.primary),
                 contentPadding = PaddingValues(vertical = 15.dp, horizontal = 20.dp),
@@ -1020,7 +985,7 @@ private fun PrepareIosCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = if (hasGame) "一键准备 iOS 登录" else "先选择目标游戏",
+                    text = "一键准备 iOS 登录",
                     style = MaterialTheme.typography.labelLarge
                 )
             }
@@ -1066,6 +1031,62 @@ private fun PrepareIosCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun AndroidLoginCompatibilityCard(
+    state: BridgeUiState,
+    onToggleNonEmptyToken: (Boolean) -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    val enabled = state.currentGame != null && !state.busy
+    var showSettings by remember { mutableStateOf(false) }
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = scheme.surface),
+        border = BorderStroke(1.dp, scheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(AppIcons.SwitchAccount, contentDescription = null, tint = scheme.primary, modifier = Modifier.size(24.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("安卓数据库登录", style = MaterialTheme.typography.titleSmall)
+                Text("非空占位凭证兼容性设置", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+            }
+            FilledTonalButton(onClick = { showSettings = true }, enabled = enabled) {
+                Text("打开窗口")
+            }
+        }
+    }
+    if (showSettings) {
+        AlertDialog(
+            onDismissRequest = { showSettings = false },
+            title = { Text("安卓数据库登录 · 兼容设置") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("非空占位凭证（新版阴阳师等 SDK 可能需要）", style = MaterialTheme.typography.bodyMedium)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("启用非空占位 token", modifier = Modifier.weight(1f))
+                        Switch(
+                            checked = state.nonEmptyToken,
+                            onCheckedChange = onToggleNonEmptyToken,
+                            enabled = enabled
+                        )
+                    }
+                    Text(
+                        "默认关闭。此项仅改变 iOS 准备文件的占位凭证，不会直接切回安卓账号，也不证明游戏已经接受数据。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { showSettings = false }) { Text("完成") } }
+        )
     }
 }
 
