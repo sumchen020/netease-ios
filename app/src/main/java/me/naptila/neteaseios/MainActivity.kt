@@ -399,13 +399,9 @@ class MainActivity : ComponentActivity() {
             showMessage("请先授权 Android/media 目录。", StatusTone.Warning)
             return
         }
-        val recentlyReturned = lastReturnedGamePackage == game.spec.packageName &&
-            SystemClock.elapsedRealtime() - lastReturnedGameTimeMs in 0L..RECENT_GAME_RETURN_MS
-        if (recentlyReturned) {
-            // A recent return is not proof of login; live gameContextInfo still
-            // gates writing in the bridge.
-            beginPrepare()
-        } else if (!Settings.canDrawOverlays(this) &&
+        // Always bring the selected game to the foreground for user confirmation.
+        // Launcher intent may resume an existing game; it is not a process-status API.
+        if (!Settings.canDrawOverlays(this) &&
             !MpayBridgeSession.prefs(this).getBoolean("game_overlay_prompted", false)) {
             uiState = uiState.copy(overlayPermissionExplanation = true)
         } else {
