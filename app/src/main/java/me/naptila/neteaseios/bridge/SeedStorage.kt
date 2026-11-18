@@ -244,9 +244,13 @@ internal object SeedStorage {
         remember(context, file, add = true)
         try {
             writeBytes(context, file, bytes)
+            // Persisted SAF permission alone proves neither write nor read visibility.
+            // Check the bytes through the same document URI before asking MPay to load them.
+            verifyReadBack(context, file, bytes)
         } catch (e: Exception) {
             delete(context, file.toString())
-            throw e
+            if (e is SeedStorageException) throw e
+            throw SeedStorageException("共享目录临时文件写入或读回校验失败，请检查目录授权和存储状态。")
         }
 
         val primaryRoot = resolvePrimaryStorageRoot(context)
@@ -282,6 +286,22 @@ internal object SeedStorage {
             if (out == null) throw IOException("stream-unavailable")
             out.write(bytes)
             out.flush()
+        }
+    }
+
+    /** Verifies only this helper's transient seed, without logging or persisting its contents. */
+    private fun verifyReadBack(context: Context, uri: Uri, expected: ByteArray) {
+        val input = context.contentResolver.openInputStream(uri)
+            ?: throw SeedStorageException("已创建临时文件，但无法读回；SDK 可能也无法读取。")
+        input.use { stream ->
+            for (byte in expected) {
+                if (stream.read() != (byte.toInt() and 0xff)) {
+                    throw SeedStorageException("临时文件读回内容不一致，已取消 SDK 加载请求。")
+                }
+            }
+            if (stream.read() != -1) {
+                throw SeedStorageException("临时文件读回长度不一致，已取消 SDK 加载请求。")
+            }
         }
     }
 
