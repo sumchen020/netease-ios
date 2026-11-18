@@ -130,6 +130,7 @@ fun BridgeScreen(
     onSelectTransportMode: (SeedTransportMode) -> Unit,
     onApplyNonEmptyToken: (Boolean) -> Unit,
     onAuthorizeSafDirectory: () -> Unit,
+    onRevokeSafDirectory: () -> Unit,
     onPrepareIosLogin: () -> Unit,
     onRefreshDiagnosticLog: () -> Unit,
     onClearDiagnosticLog: () -> Unit
@@ -179,7 +180,8 @@ fun BridgeScreen(
                     state = state,
                     dark = dark,
                     onShowPicker = { showAppPicker = true },
-                    onOpenGame = onOpenGame
+                    onOpenGame = onOpenGame,
+                    onRevokeSafDirectory = onRevokeSafDirectory
                 )
 
                 StatusFeedbackBanner(
@@ -241,7 +243,8 @@ private fun HeroHeaderCard(
     state: BridgeUiState,
     dark: Boolean,
     onShowPicker: () -> Unit,
-    onOpenGame: () -> Unit
+    onOpenGame: () -> Unit,
+    onRevokeSafDirectory: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
     val uriHandler = LocalUriHandler.current
@@ -251,6 +254,28 @@ private fun HeroHeaderCard(
         listOf(Color(0xFFFFFFFF), Color(0xFFF5F8FF))
     }
     val selected = state.currentGame
+    var showRevokeConfirm by remember(selected?.spec?.packageName) { mutableStateOf(false) }
+    if (showRevokeConfirm && state.safAuthorized && state.transportMode == SeedTransportMode.SAF_MEDIA) {
+        AlertDialog(
+            onDismissRequest = { showRevokeConfirm = false },
+            title = { Text("取消目录授权？") },
+            text = {
+                Text("取消「${state.gameDisplayName}」的目录授权后，需要重新授权才能使用共享目录准备。不会删除游戏文件。")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showRevokeConfirm = false
+                        onRevokeSafDirectory()
+                    },
+                    enabled = !state.busy
+                ) { Text("取消授权") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRevokeConfirm = false }) { Text("保留授权") }
+            }
+        )
+    }
 
     Card(
         shape = RoundedCornerShape(24.dp),
@@ -453,20 +478,22 @@ private fun HeroHeaderCard(
                         modifier = Modifier.weight(1f)
                     )
 
-                    val (modeLabel, modeTone) = when {
-                        state.submittedCurrent -> "上次已确认" to StatusTone.Success
-                        state.unconfirmedCurrent -> "已发送 · 待核对" to StatusTone.Warning
-                        state.transportMode == SeedTransportMode.SAF_MEDIA -> {
+                    val (modeLabel, modeTone) =
+                        if (state.transportMode == SeedTransportMode.SAF_MEDIA) {
                             if (state.safAuthorized) "目录已授权" to StatusTone.Success
                             else "目录待授权" to StatusTone.Warning
+                        } else {
+                            "标准缓存" to StatusTone.Neutral
                         }
-                        else -> "标准缓存" to StatusTone.Neutral
-                    }
                     StatusPill(
                         text = modeLabel,
                         tone = modeTone,
                         dark = dark,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        onClick = if (state.transportMode == SeedTransportMode.SAF_MEDIA && state.safAuthorized) {
+                            { showRevokeConfirm = true }
+                        } else null,
+                        enabled = !state.busy && selected.installed
                     )
 
                     FilledTonalButton(
@@ -742,7 +769,9 @@ private fun StatusPill(
     text: String,
     tone: StatusTone,
     dark: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    enabled: Boolean = true
 ) {
     val scheme = MaterialTheme.colorScheme
     val (bg, fg) = when (tone) {
@@ -755,7 +784,13 @@ private fun StatusPill(
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = bg,
-        modifier = modifier
+        modifier = modifier.then(
+            if (onClick != null) {
+                Modifier.clip(RoundedCornerShape(12.dp)).clickable(enabled = enabled, onClick = onClick)
+            } else {
+                Modifier
+            }
+        )
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
@@ -931,51 +966,42 @@ private fun PrepareIosCard(
                 }
             }
 
-            // SAF authorization is visible even when advanced mode choices are collapsed.
-            if (state.transportMode == SeedTransportMode.SAF_MEDIA) {
-                        Text("目录授权", style = MaterialTheme.typography.titleSmall)
-                        Text("共享目录需要先授权文件夹", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
-                        val authToneFg = if (state.safAuthorized) {
-                            if (dark) StatusSuccessDark else StatusSuccessLight
-                        } else {
-                            scheme.onSurfaceVariant
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(13.dp),
-                            color = scheme.surfaceVariant.copy(alpha = if (dark) 0.5f else 0.65f),
-                            border = BorderStroke(1.dp, scheme.outlineVariant),
-                            modifier = Modifier.fillMaxWidth()
+            // Once the game has a valid saved grant, keep the preparation card compact.
+            // Revoke via the header's "目录已授权" chip to show this prompt again.
+            if (hasGame && state.transportMode == SeedTransportMode.SAF_MEDIA && !state.safAuthorized) {
+                Surface(
+                    shape = RoundedCornerShape(13.dp),
+                    color = scheme.surfaceVariant.copy(alpha = if (dark) 0.5f else 0.65f),
+                    border = BorderStroke(1.dp, scheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = AppIcons.Folder,
+                            contentDescription = null,
+                            tint = scheme.onSurfaceVariant,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Text(
+                            text = "待授权 Android/media",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(
+                            onClick = onAuthorizeSafDirectory,
+                            enabled = !state.busy,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = AppIcons.Folder,
-                                    contentDescription = null,
-                                    tint = authToneFg,
-                                    modifier = Modifier.size(17.dp)
-                                )
-                                Text(
-                                    text = if (state.safAuthorized) "已授权 Android/media" else "待授权 Android/media",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = authToneFg,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                TextButton(
-                                    onClick = onAuthorizeSafDirectory,
-                                    enabled = !state.busy,
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-                                ) {
-                                    Text(
-                                        text = if (state.safAuthorized) "更换" else "授权",
-                                        style = MaterialTheme.typography.labelMedium
-                                    )
-                                }
-                            }
+                            Text("授权", style = MaterialTheme.typography.labelMedium)
                         }
                     }
+                }
+            }
 
             Button(
                 onClick = onPrepareIosLogin,
@@ -1418,6 +1444,7 @@ private fun BridgeScreenPreview() {
             onSelectTransportMode = {},
             onApplyNonEmptyToken = {},
             onAuthorizeSafDirectory = {},
+            onRevokeSafDirectory = {},
             onPrepareIosLogin = {},
             onRefreshDiagnosticLog = {},
             onClearDiagnosticLog = {}
