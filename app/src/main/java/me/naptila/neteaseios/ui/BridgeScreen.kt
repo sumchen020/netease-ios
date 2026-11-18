@@ -1051,6 +1051,7 @@ private fun LoginCompatibilityCard(
     var pendingNonEmptyToken by remember(target?.spec?.packageName, showSettings) {
         mutableStateOf(state.nonEmptyToken)
     }
+    val hasPendingChange = pendingNonEmptyToken != state.nonEmptyToken
 
     Card(
         shape = RoundedCornerShape(18.dp),
@@ -1104,7 +1105,7 @@ private fun LoginCompatibilityCard(
                         Column(modifier = Modifier.weight(1f)) {
                             Text("非空占位凭证", style = MaterialTheme.typography.titleSmall)
                             Text(
-                                "仅在当前游戏 SDK 不接受空占位凭证时尝试。",
+                                "若使用默认空占位凭证准备后出现兼容问题，可手动尝试开启；无法自动判断游戏是否需要。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = scheme.onSurfaceVariant
                             )
@@ -1116,12 +1117,12 @@ private fun LoginCompatibilityCard(
                         )
                     }
                     Text(
-                        "仅切换开关不会修改游戏登录状态。点击下方按钮后，助手会保存选择，并使用新设置重新执行 iOS 登录准备。",
+                        "开启后，下次生成的 iOS 准备文件会使用非空占位 token（不是有效登录凭证）。只有点击「应用并重新准备」才会保存本次选择并重新调用游戏登录组件；不会直接切换安卓角色。",
                         style = MaterialTheme.typography.bodySmall,
                         color = scheme.onSurfaceVariant
                     )
                     Text(
-                        "部分游戏可能拒绝非空占位凭证，或清除本地登录记录。请先确认能够重新登录原账号。",
+                        "注意：部分游戏 SDK 可能拒绝此格式，登录异常时也可能导致游戏端缓存的登录记录失效。请确保能通过游戏官方入口重新登录原账号。",
                         style = MaterialTheme.typography.bodySmall,
                         color = scheme.error
                     )
@@ -1134,9 +1135,15 @@ private fun LoginCompatibilityCard(
                         showSettings = false
                         onApplyNonEmptyToken(selected)
                     },
-                    enabled = enabled
+                    enabled = enabled && hasPendingChange
                 ) {
-                    Text(if (pendingNonEmptyToken) "开启并应用 · 重新准备" else "关闭并应用 · 重新准备")
+                    Text(
+                        when {
+                            !hasPendingChange -> "设置未更改"
+                            pendingNonEmptyToken -> "开启并应用 · 重新准备"
+                            else -> "关闭并应用 · 重新准备"
+                        }
+                    )
                 }
             },
             dismissButton = {
