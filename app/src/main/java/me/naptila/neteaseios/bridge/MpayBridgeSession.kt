@@ -236,6 +236,7 @@ class MpayBridgeSession(
                                 "not_logged_in" -> "未读取到已登录的网易账号，请先在「${target.appLabel}」正常登录该账号后再试。"
                                 "no_callback" -> "没有收到游戏接口响应，请返回游戏关闭当前页面后重试。"
                                 "bridge_missing" -> "游戏网页桥未就绪，请先打开「${target.appLabel}」登录进入主页后再试。"
+                                "load_not_dispatched" -> "临时准备文件已写入，但游戏网页桥未能提交 SDK 加载请求。请确认游戏组件是否支持此方法。"
                                 "sdk_read_failed" -> "SDK 未能读取准备文件，该游戏可能不支持当前写入方式。"
                                 "sdk_invalid_session" -> "SDK 已读取文件，但未接受账号准备格式，当前游戏仍需适配。"
                                 "sdk_rejected" -> "SDK 拒绝了本次登录准备，当前游戏仍需适配。"
