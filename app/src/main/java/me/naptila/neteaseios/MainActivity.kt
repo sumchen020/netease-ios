@@ -205,6 +205,8 @@ class MainActivity : ComponentActivity() {
             showMessage("目标游戏未安装，无法应用兼容性设置。", StatusTone.Warning)
             return
         }
+        // Avoid opening the game or rewriting a preference when nothing changed.
+        if (uiState.nonEmptyToken == enabled) return
         SeedStorage.setNonEmptyTokenEnabled(this, game.spec.packageName, enabled)
         uiState = uiState.copy(nonEmptyToken = enabled)
         beginPrepare()
