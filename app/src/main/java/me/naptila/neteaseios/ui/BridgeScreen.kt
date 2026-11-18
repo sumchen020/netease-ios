@@ -1026,18 +1026,8 @@ private fun PrepareIosCard(
                 }
             }
 
-            if (!state.busy && state.submittedCurrent) {
-                var showGuide by remember(state.currentGame?.spec?.packageName) { mutableStateOf(false) }
-                TextButton(onClick = { showGuide = true }) { Text("如何切回安卓角色") }
-                if (showGuide) {
-                    AlertDialog(
-                        onDismissRequest = { showGuide = false },
-                        title = { Text("如何切回安卓角色") },
-                        text = { Text("先确认你能用原账号重新登录。回到「${state.gameDisplayName}」，在「切换账号」列表移除本机保存的这条登录记录，再用同一账号登录。进入游戏后核对区服和角色。") },
-                        confirmButton = { TextButton(onClick = { showGuide = false }) { Text("知道了") } }
-                    )
-                }
-            }
+            // Restoring Android roles is unrelated to the iOS compatibility retry;
+            // avoid presenting a misleading account-removal action inside this card.
         }
     }
 }
@@ -1080,7 +1070,7 @@ private fun LoginCompatibilityCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text("登录兼容性设置", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    if (state.nonEmptyToken) "非空占位凭证：已开启" else "非空占位凭证：默认关闭",
+                    if (state.nonEmptyToken) "iOS 兼容重试：已开启" else "iOS 兼容重试：默认关闭",
                     style = MaterialTheme.typography.bodySmall,
                     color = scheme.onSurfaceVariant
                 )
@@ -1104,6 +1094,11 @@ private fun LoginCompatibilityCard(
                         "当前游戏：「${state.gameDisplayName}」",
                         style = MaterialTheme.typography.bodyMedium
                     )
+                    Text(
+                        "首次使用请保持关闭，先执行默认 iOS 登录准备并在游戏中重新登录核对角色。若仍进入安卓角色，再开启兼容模式，重新准备 iOS 登录。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -1112,7 +1107,7 @@ private fun LoginCompatibilityCard(
                         Column(modifier = Modifier.weight(1f)) {
                             Text("非空占位凭证", style = MaterialTheme.typography.titleSmall)
                             Text(
-                                "若使用默认空占位凭证准备后出现兼容问题，可手动尝试开启；无法自动判断游戏是否需要。",
+                                "开启后使用非空占位 token 重新生成 iOS 准备数据，尝试兼容部分游戏版本。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = scheme.onSurfaceVariant
                             )
@@ -1124,12 +1119,12 @@ private fun LoginCompatibilityCard(
                         )
                     }
                     Text(
-                        "开启后，下次生成的 iOS 准备文件会使用非空占位 token（不是有效登录凭证）。只有点击「应用并重新准备」才会保存本次选择并重新调用游戏登录组件；不会直接切换安卓角色。",
+                        "点击「应用并重试」才会保存选项，立即重新生成 iOS 准备文件并调用游戏 SDK。这不是切回安卓角色的功能；占位 token 也不是有效登录凭证。",
                         style = MaterialTheme.typography.bodySmall,
                         color = scheme.onSurfaceVariant
                     )
                     Text(
-                        "注意：部分游戏 SDK 可能拒绝此格式，登录异常时也可能导致游戏端缓存的登录记录失效。请确保能通过游戏官方入口重新登录原账号。",
+                        "注意：兼容重试不保证进入 iOS 角色。部分 SDK 可能拒绝该格式；请确保能通过游戏官方入口重新登录原账号。",
                         style = MaterialTheme.typography.bodySmall,
                         color = scheme.error
                     )
@@ -1147,8 +1142,8 @@ private fun LoginCompatibilityCard(
                     Text(
                         when {
                             !hasPendingChange -> "设置未更改"
-                            pendingNonEmptyToken -> "开启并应用 · 重新准备"
-                            else -> "关闭并应用 · 重新准备"
+                            pendingNonEmptyToken -> "开启兼容 · 重试 iOS 准备"
+                            else -> "关闭兼容 · 重试 iOS 准备"
                         }
                     )
                 }
