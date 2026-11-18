@@ -501,10 +501,24 @@ class MainActivity : ComponentActivity() {
 
     private fun confirmGameReadyAndPrepare() {
         if (!uiState.gameReadyConfirmation || uiState.busy) return
-        val pkg = uiState.currentGame?.spec?.packageName ?: return
-        BridgeDiagnosticLog.record(this, pkg, BridgeLogEvent.ASSISTANT_CONFIRMED)
+        val spec = uiState.currentGame?.spec ?: return
         uiState = uiState.copy(gameReadyConfirmation = false)
-        beginPrepare()
+        BridgeDiagnosticLog.record(this, spec.packageName, BridgeLogEvent.ASSISTANT_CONFIRMED)
+        // In the no-overlay flow the user has returned to this assistant,
+        // which placed the game in the background. Resume the selected game
+        // first, then run the same game-side account check and MPay bridge.
+        if (!GameTarget.open(this, spec.packageName)) {
+            showMessage("无法重新打开「${spec.displayName}」，本次未启动桥接。", StatusTone.Error)
+            return
+        }
+        BridgeDiagnosticLog.record(this, spec.packageName, BridgeLogEvent.GAME_REOPENED_BEFORE_BRIDGE)
+        window.decorView.postDelayed({
+            if (!isFinishing && !isDestroyed && !uiState.busy &&
+                uiState.currentGame?.spec?.packageName == spec.packageName) {
+                beginPrepare()
+            }
+        }, 1300L)
+        showMessage("已重新打开游戏，正在进入 iOS 登录桥接…", StatusTone.Neutral)
     }
 
     private fun cancelGameReadyPrompt() {
