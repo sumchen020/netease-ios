@@ -124,7 +124,7 @@ fun BridgeScreen(
     onSelectInstalledGame: (InstalledGame) -> Unit,
     onRefreshApps: () -> Unit,
     onSelectTransportMode: (SeedTransportMode) -> Unit,
-    onToggleNonEmptyToken: (Boolean) -> Unit,
+    onApplyNonEmptyToken: (Boolean) -> Unit,
     onAuthorizeSafDirectory: () -> Unit,
     onPrepareIosLogin: () -> Unit
 ) {
@@ -190,9 +190,9 @@ fun BridgeScreen(
                     onAuthorizeSafDirectory = onAuthorizeSafDirectory,
                     onPrepareIosLogin = onPrepareIosLogin
                 )
-                AndroidLoginCompatibilityCard(
+                LoginCompatibilityCard(
                     state = state,
-                    onToggleNonEmptyToken = onToggleNonEmptyToken
+                    onApplyNonEmptyToken = onApplyNonEmptyToken
                 )
             }
         }
@@ -1035,14 +1035,23 @@ private fun PrepareIosCard(
     }
 }
 
+/**
+ * Non-empty placeholder tokens are opt-in and have no effect on previously imported sessions.
+ * Keep the switch local to this dialog until the user explicitly confirms re-preparation.
+ */
 @Composable
-private fun AndroidLoginCompatibilityCard(
+private fun LoginCompatibilityCard(
     state: BridgeUiState,
-    onToggleNonEmptyToken: (Boolean) -> Unit
+    onApplyNonEmptyToken: (Boolean) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
-    val enabled = state.currentGame != null && !state.busy
+    val target = state.currentGame
+    val enabled = target?.installed == true && !state.busy
     var showSettings by remember { mutableStateOf(false) }
+    var pendingNonEmptyToken by remember(target?.spec?.packageName, showSettings) {
+        mutableStateOf(state.nonEmptyToken)
+    }
+
     Card(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = scheme.surface),
@@ -1054,39 +1063,85 @@ private fun AndroidLoginCompatibilityCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Icon(AppIcons.SwitchAccount, contentDescription = null, tint = scheme.primary, modifier = Modifier.size(24.dp))
+            Icon(
+                imageVector = AppIcons.SwitchAccount,
+                contentDescription = null,
+                tint = scheme.primary,
+                modifier = Modifier.size(24.dp)
+            )
             Column(modifier = Modifier.weight(1f)) {
-                Text("安卓数据库登录", style = MaterialTheme.typography.titleSmall)
-                Text("非空占位凭证兼容性设置", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+                Text("登录兼容性设置", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    if (state.nonEmptyToken) "非空占位凭证：已开启" else "非空占位凭证：默认关闭",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant
+                )
             }
-            FilledTonalButton(onClick = { showSettings = true }, enabled = enabled) {
-                Text("打开窗口")
+            FilledTonalButton(
+                onClick = { showSettings = true },
+                enabled = enabled
+            ) {
+                Text("打开设置")
             }
         }
     }
+
     if (showSettings) {
         AlertDialog(
             onDismissRequest = { showSettings = false },
-            title = { Text("安卓数据库登录 · 兼容设置") },
+            title = { Text("登录兼容性设置") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("非空占位凭证（新版阴阳师等 SDK 可能需要）", style = MaterialTheme.typography.bodyMedium)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("启用非空占位 token", modifier = Modifier.weight(1f))
+                    Text(
+                        "当前游戏：「${state.gameDisplayName}」",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("非空占位凭证", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "仅在当前游戏 SDK 不接受空占位凭证时尝试。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = scheme.onSurfaceVariant
+                            )
+                        }
                         Switch(
-                            checked = state.nonEmptyToken,
-                            onCheckedChange = onToggleNonEmptyToken,
+                            checked = pendingNonEmptyToken,
+                            onCheckedChange = { pendingNonEmptyToken = it },
                             enabled = enabled
                         )
                     }
                     Text(
-                        "默认关闭。此项仅改变 iOS 准备文件的占位凭证，不会直接切回安卓账号，也不证明游戏已经接受数据。",
+                        "仅切换开关不会修改游戏登录状态。点击下方按钮后，助手会保存选择，并使用新设置重新执行 iOS 登录准备。",
                         style = MaterialTheme.typography.bodySmall,
                         color = scheme.onSurfaceVariant
                     )
+                    Text(
+                        "部分游戏可能拒绝非空占位凭证，或清除本地登录记录。请先确认能够重新登录原账号。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.error
+                    )
                 }
             },
-            confirmButton = { TextButton(onClick = { showSettings = false }) { Text("完成") } }
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val selected = pendingNonEmptyToken
+                        showSettings = false
+                        onApplyNonEmptyToken(selected)
+                    },
+                    enabled = enabled
+                ) {
+                    Text(if (pendingNonEmptyToken) "开启并应用 · 重新准备" else "关闭并应用 · 重新准备")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSettings = false }) { Text("取消") }
+            }
         )
     }
 }
