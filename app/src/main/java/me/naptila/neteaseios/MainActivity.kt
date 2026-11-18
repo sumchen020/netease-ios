@@ -371,7 +371,7 @@ class MainActivity : ComponentActivity() {
         val pkg = uiState.currentGame?.spec?.packageName
         if (attempt != null && pkg != null) {
             val error = if (result == "failed" || result == "cancelled") text else null
-            if (!history.finish(pkg, attempt, result, error)) {
+            if (!history.finish(pkg, attempt, result, error, text)) {
                 activeAttempt = null
                 session?.close()
                 session = null
@@ -442,12 +442,14 @@ class MainActivity : ComponentActivity() {
                 }
 
                 submittedCurrent -> {
-                    message = "上次 SDK 已确认加载请求。请回「$gameName」重新登录同一账号，并核对区服、角色。"
+                    message = history.diagnostic(pkg)
+                        ?: "上次 SDK 返回成功回调；仍需在游戏内核对实际区服和角色。"
                     tone = StatusTone.Success
                 }
 
                 unconfirmedCurrent -> {
-                    message = "上次请求已发送，SDK 未确认是否接受。请回「$gameName」重新登录并核对角色。"
+                    message = history.diagnostic(pkg)
+                        ?: "上次请求已发送，SDK 未确认是否接受。请回「$gameName」重新登录并核对角色。"
                     tone = StatusTone.Warning
                 }
 
