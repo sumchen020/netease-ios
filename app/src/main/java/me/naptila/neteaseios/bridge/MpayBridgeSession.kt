@@ -301,6 +301,16 @@ class MpayBridgeSession(
 
                         "/return-assistant" -> {
                             reply(socket, 200, "application/json", "{\"ok\":true}")
+                            // A user request to leave the game WebView must never
+                            // fabricate SDK success. Record the last verified stage.
+                            when {
+                                preparedSeed != null && loadDispatched.get() ->
+                                    deliverSubmission(false, "manual_return")
+                                preparedSeed != null ->
+                                    fail("文件已写入，但 SDK 加载请求尚未确认发出。")
+                                !resultDelivered.get() ->
+                                    fail("已返回助手，本次没有完成游戏账号与文件准备。")
+                            }
                             main.post {
                                 val launch = appContext.packageManager.getLaunchIntentForPackage(appContext.packageName)
                                 if (launch != null) {
@@ -494,6 +504,7 @@ internal enum class BridgeLogEvent(val label: String) {
     PLACEHOLDER_OFF("兼容设置：非空占位已关闭"),
     OVERLAY_CONFIRMED("在游戏悬浮窗点击确定（游戏通常仍在前台）"),
     ASSISTANT_CONFIRMED("返回助手弹窗点击确定（游戏可能进入后台）"),
+    GAME_REOPENED_BEFORE_BRIDGE("无浮窗确认后重新切回游戏，再执行桥接"),
     GAME_LAUNCH_SENT("已向系统发出打开目标游戏请求"),
     OVERLAY_DISPLAYED("游戏悬浮窗已显示"),
     OVERLAY_FALLBACK("没有游戏悬浮窗，使用返回助手确认流程"),
