@@ -139,7 +139,11 @@ class MpayBridgeSession(
                             socket,
                             200,
                             "text/html; charset=utf-8",
-                            BridgePage.render(appLabel = target.appLabel, base = "http://$host$base")
+                            BridgePage.render(
+                                appLabel = target.appLabel,
+                                base = "http://$host$base",
+                                compatibilityMode = nonEmptyToken
+                            )
                         )
                         return@use
                     }
