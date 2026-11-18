@@ -885,7 +885,7 @@ private fun PrepareIosCard(
                     color = scheme.onSurface
                 )
                 Text(
-                    text = "先在游戏主页登好账号 → 点下方准备 → 回游戏「切换账号」重登",
+                    text = "按当前方式准备 iOS 登录数据",
                     style = MaterialTheme.typography.bodySmall,
                     color = scheme.onSurfaceVariant
                 )
