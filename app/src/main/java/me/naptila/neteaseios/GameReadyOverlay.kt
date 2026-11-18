@@ -58,14 +58,14 @@ internal class GameReadyOverlay(
         }
 
         panel.addView(TextView(activity).apply {
-            text = "确认游戏已进入"
+            text = "确认游戏登录状态"
             textSize = 17f
             setTextColor(foreground)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         })
 
         val description = TextView(activity).apply {
-            text = "已看到欢迎提示或进入游戏主页？"
+            text = "已看到「欢迎进入游戏」提示，或已登录游戏账号？"
             textSize = 13f
             setTextColor(muted)
             setPadding(0, dp(6), 0, dp(12))
