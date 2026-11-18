@@ -2,6 +2,7 @@ package me.naptila.neteaseios
 
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.SystemClock
 import java.util.UUID
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -40,6 +41,15 @@ class MainActivity : ComponentActivity() {
     private var directorySpec: GameSpec? = null
     private var resumePrepareAfterGrant: Boolean = false
 
+    // Launch-and-return signal, not privileged cross-app process monitoring.
+    // Returning from a game is only a hint; the MPay gameContextInfo check
+    // independently gates every write.
+    private var pendingGameVisitPackage: String? = null
+    private var pendingGameVisitForPrepare: Boolean = false
+    private var pendingGameVisitPaused: Boolean = false
+    private var lastReturnedGamePackage: String? = null
+    private var lastReturnedGameTimeMs: Long = 0L
+
     private val directoryPicker =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             val spec = directorySpec
@@ -70,7 +80,7 @@ class MainActivity : ComponentActivity() {
 
                         if (shouldResumePrepare) {
                             if (uiState.currentGame?.spec?.packageName == spec.packageName) {
-                                beginPrepare()
+                                requestPrepareIosLogin()
                             } else {
                                 showMessage("已保存目录授权，请重新选择目标游戏。", StatusTone.Warning)
                             }
@@ -107,6 +117,14 @@ class MainActivity : ComponentActivity() {
                 uiState = uiState.copy(busy = true)
             }
         }
+        savedInstanceState?.getString("pending_game_visit_package")
+            ?.takeIf(BridgeProtocol::isValidPackageName)?.let {
+                pendingGameVisitPackage = it
+                pendingGameVisitForPrepare =
+                    savedInstanceState.getBoolean("pending_game_visit_for_prepare", false)
+                pendingGameVisitPaused =
+                    savedInstanceState.getBoolean("pending_game_visit_paused", false)
+            }
         refreshFromPrefs(updateStatusMessage = true)
         loadInstalledAppsAsync()
 
@@ -121,12 +139,21 @@ class MainActivity : ComponentActivity() {
                     onApplyNonEmptyToken = ::applyNonEmptyTokenAndPrepare,
                     onAuthorizeSafDirectory = ::authorizeCurrentGameDirectory,
                     onRevokeSafDirectory = ::revokeCurrentGameDirectory,
-                    onPrepareIosLogin = ::beginPrepare,
+                    onPrepareIosLogin = ::requestPrepareIosLogin,
+                    onGameReadyContinue = ::confirmGameReadyAndPrepare,
+                    onGameReadyCancel = ::cancelGameReadyPrompt,
                     onRefreshDiagnosticLog = ::refreshDiagnosticLog,
                     onClearDiagnosticLog = ::clearDiagnosticLog
                 )
             }
         }
+    }
+
+    override fun onPause() {
+        if (pendingGameVisitPackage != null) {
+            pendingGameVisitPaused = true
+        }
+        super.onPause()
     }
 
     override fun onResume() {
@@ -141,6 +168,22 @@ class MainActivity : ComponentActivity() {
             )
         }
         refreshFromPrefs(updateStatusMessage = !uiState.busy)
+
+        val returningPackage = pendingGameVisitPackage
+        if (returningPackage != null && pendingGameVisitPaused) {
+            val shouldPrepare = pendingGameVisitForPrepare
+            pendingGameVisitPackage = null
+            pendingGameVisitPaused = false
+            pendingGameVisitForPrepare = false
+            if (uiState.currentGame?.spec?.packageName == returningPackage) {
+                lastReturnedGamePackage = returningPackage
+                lastReturnedGameTimeMs = SystemClock.elapsedRealtime()
+                if (shouldPrepare) {
+                    uiState = uiState.copy(gameReadyConfirmation = true)
+                    showMessage("请确认已进入游戏，再继续检测账号。", StatusTone.Neutral)
+                }
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -155,6 +198,11 @@ class MainActivity : ComponentActivity() {
             outState.putString("directory_package", it.packageName)
             outState.putString("directory_name", it.displayName)
             outState.putBoolean("directory_resume_prepare", resumePrepareAfterGrant)
+        }
+        pendingGameVisitPackage?.let {
+            outState.putString("pending_game_visit_package", it)
+            outState.putBoolean("pending_game_visit_for_prepare", pendingGameVisitForPrepare)
+            outState.putBoolean("pending_game_visit_paused", pendingGameVisitPaused)
         }
         super.onSaveInstanceState(outState)
     }
@@ -176,10 +224,18 @@ class MainActivity : ComponentActivity() {
 
     private fun selectInstalledGame(game: InstalledGame) {
         if (uiState.busy) return
+        pendingGameVisitPackage = null
+        pendingGameVisitPaused = false
+        pendingGameVisitForPrepare = false
+        lastReturnedGamePackage = null
         val withIcon = GameTarget.inspect(this, game.spec, loadIcon = true)
         history.rememberPackage(withIcon.spec.packageName)
         persistSelectedSpec(withIcon.spec)
-        uiState = uiState.copy(currentGame = withIcon, recentPackages = history.recentPackages())
+        uiState = uiState.copy(
+            currentGame = withIcon,
+            recentPackages = history.recentPackages(),
+            gameReadyConfirmation = false
+        )
         refreshFromPrefs(updateStatusMessage = true)
     }
 
@@ -214,7 +270,7 @@ class MainActivity : ComponentActivity() {
         if (uiState.nonEmptyToken == enabled) return
         SeedStorage.setNonEmptyTokenEnabled(this, game.spec.packageName, enabled)
         uiState = uiState.copy(nonEmptyToken = enabled)
-        beginPrepare()
+        requestPrepareIosLogin()
     }
 
     private fun authorizeCurrentGameDirectory() {
@@ -279,17 +335,76 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openTargetGame() {
-        val spec = uiState.currentGame?.spec ?: run {
+        val game = uiState.currentGame ?: return
+        launchGameForVisit(game.spec, forPrepare = false)
+    }
+
+    /**
+     * Normal apps cannot determine whether a different game is still running
+     * or directly observe its "欢迎进入游戏" banner. We reuse a recent, witnessed
+     * return from a game opened by this helper; otherwise open it and let the
+     * user confirm the welcome/home screen on return.
+     */
+    private fun requestPrepareIosLogin() {
+        if (uiState.busy || uiState.gameReadyConfirmation) return
+        val game = uiState.currentGame ?: run {
             showMessage("请先选择目标游戏。", StatusTone.Warning)
             return
         }
-        try {
-            if (!GameTarget.open(this, spec.packageName)) {
-                showMessage("无法打开「${spec.displayName}」。", StatusTone.Error)
-            }
-        } catch (_: Exception) {
-            showMessage("无法打开「${spec.displayName}」，请手动启动。", StatusTone.Warning)
+        if (!game.installed) {
+            showMessage("游戏未安装，请先安装或重新选择。", StatusTone.Warning)
+            return
         }
+        if (uiState.transportMode == SeedTransportMode.SAF_MEDIA && !uiState.safAuthorized) {
+            showMessage("请先授权 Android/media 目录。", StatusTone.Warning)
+            return
+        }
+        val recentlyReturned = lastReturnedGamePackage == game.spec.packageName &&
+            SystemClock.elapsedRealtime() - lastReturnedGameTimeMs in 0L..RECENT_GAME_RETURN_MS
+        if (recentlyReturned) {
+            // Recent activity is not proof of login. The bridge still requires
+            // an independent, fresh gameContextInfo response before seed writing.
+            beginPrepare()
+        } else {
+            launchGameForVisit(game.spec, forPrepare = true)
+        }
+    }
+
+    private fun launchGameForVisit(spec: GameSpec, forPrepare: Boolean) {
+        if (uiState.busy) return
+        pendingGameVisitPackage = spec.packageName
+        pendingGameVisitForPrepare = forPrepare
+        pendingGameVisitPaused = false
+        uiState = uiState.copy(gameReadyConfirmation = false)
+        if (forPrepare) {
+            showMessage("进入游戏看到欢迎提示后，返回助手继续。", StatusTone.Neutral)
+        }
+        val opened = runCatching {
+            GameTarget.open(this, spec.packageName)
+        }.getOrDefault(false)
+        if (!opened) {
+            pendingGameVisitPackage = null
+            pendingGameVisitForPrepare = false
+            showMessage("无法打开「${spec.displayName}」，请手动启动游戏。", StatusTone.Warning)
+        }
+    }
+
+    private fun confirmGameReadyAndPrepare() {
+        if (!uiState.gameReadyConfirmation || uiState.busy) return
+        uiState = uiState.copy(gameReadyConfirmation = false)
+        beginPrepare()
+    }
+
+    private fun cancelGameReadyPrompt() {
+        uiState = uiState.copy(gameReadyConfirmation = false)
+        lastReturnedGamePackage = null
+        lastReturnedGameTimeMs = 0L
+        showMessage("已取消准备，可重新检测并准备。", StatusTone.Neutral)
+    }
+
+    private companion object {
+        // A soft workflow convenience hint, never a proof that a game is running.
+        const val RECENT_GAME_RETURN_MS = 3 * 60 * 1000L
     }
 
     private fun beginPrepare() {
