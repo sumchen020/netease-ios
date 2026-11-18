@@ -14,6 +14,8 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import me.naptila.neteaseios.bridge.BridgeDiagnosticLog
+import me.naptila.neteaseios.bridge.BridgeLogEvent
 import me.naptila.neteaseios.bridge.BridgeProtocol
 import me.naptila.neteaseios.bridge.DirectoryAccessRequired
 import me.naptila.neteaseios.bridge.GameSpec
@@ -118,7 +120,9 @@ class MainActivity : ComponentActivity() {
                     onSelectTransportMode = ::selectTransportMode,
                     onApplyNonEmptyToken = ::applyNonEmptyTokenAndPrepare,
                     onAuthorizeSafDirectory = ::authorizeCurrentGameDirectory,
-                    onPrepareIosLogin = ::beginPrepare
+                    onPrepareIosLogin = ::beginPrepare,
+                    onRefreshDiagnosticLog = ::refreshDiagnosticLog,
+                    onClearDiagnosticLog = ::clearDiagnosticLog
                 )
             }
         }
@@ -275,6 +279,16 @@ class MainActivity : ComponentActivity() {
         if (uiState.busy) return
         val game = uiState.currentGame ?: return
         val spec = game.spec
+        BridgeDiagnosticLog.record(this, spec.packageName, BridgeLogEvent.PREPARE_TAPPED)
+        BridgeDiagnosticLog.record(
+            this, spec.packageName,
+            if (uiState.transportMode == SeedTransportMode.SAF_MEDIA)
+                BridgeLogEvent.TRANSPORT_SAF else BridgeLogEvent.TRANSPORT_CACHE
+        )
+        BridgeDiagnosticLog.record(
+            this, spec.packageName,
+            if (uiState.nonEmptyToken) BridgeLogEvent.PLACEHOLDER_ON else BridgeLogEvent.PLACEHOLDER_OFF
+        )
         val attempt = UUID.randomUUID().toString()
         activeAttempt = attempt
         history.begin(game, attempt)
@@ -388,6 +402,19 @@ class MainActivity : ComponentActivity() {
         showMessage(text, tone)
     }
 
+    private fun refreshDiagnosticLog() {
+        val pkg = uiState.currentGame?.spec?.packageName
+        uiState = uiState.copy(
+            diagnosticEvents = if (pkg == null) emptyList() else BridgeDiagnosticLog.entries(this, pkg)
+        )
+    }
+
+    private fun clearDiagnosticLog() {
+        val pkg = uiState.currentGame?.spec?.packageName ?: return
+        BridgeDiagnosticLog.clear(this, pkg)
+        refreshDiagnosticLog()
+    }
+
     private fun showMessage(text: String, tone: StatusTone) {
         uiState = uiState.copy(
             statusMessage = text,
@@ -403,6 +430,7 @@ class MainActivity : ComponentActivity() {
                 submittedCurrent = false,
                 unconfirmedCurrent = false,
                 safAuthorized = false,
+                diagnosticEvents = emptyList(),
                 statusMessage = if (updateStatusMessage && !uiState.busy) "请先选择目标网易游戏。" else uiState.statusMessage,
                 statusTone = if (updateStatusMessage && !uiState.busy) StatusTone.Neutral else uiState.statusTone
             )
@@ -478,6 +506,7 @@ class MainActivity : ComponentActivity() {
             transportMode = mode,
             nonEmptyToken = nonEmptyToken,
             safAuthorized = safAuthorized,
+            diagnosticEvents = BridgeDiagnosticLog.entries(this, pkg),
             statusMessage = message,
             statusTone = tone
         )
