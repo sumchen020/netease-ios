@@ -57,7 +57,7 @@ class MpayBridgeSession(
     @Volatile
     private var preparedSeed: PreparedSeed? = null
     @Volatile
-    private var unconfirmedGraceDelete = false
+    private var unconfirmedCleanupDeferred = false
 
     init {
         SeedStorage.ensureReady(appContext, target, transportMode)
@@ -211,7 +211,7 @@ class MpayBridgeSession(
                             val gameId = capturedGameId
                             val first = resultDelivered.compareAndSet(false, true)
                             if (first) {
-                                unconfirmedGraceDelete = !confirmed
+                                unconfirmedCleanupDeferred = !confirmed
                                 prefs(appContext).edit()
                                     .putString("state", if (confirmed) "submitted" else "unconfirmed")
                                     .putString("state_package", target.spec.packageName)
@@ -312,11 +312,13 @@ class MpayBridgeSession(
             runCatching { server.close() }
             val cleanupUri = preparedSeed?.cleanupUri?.toString()
             if (cleanupUri != null) {
-                if (unconfirmedGraceDelete) {
-                    main.postDelayed({ SeedStorage.deleteAsync(appContext, cleanupUri) }, 5_000L)
-                } else {
+                if (!unconfirmedCleanupDeferred) {
                     SeedStorage.deleteAsync(appContext, cleanupUri)
                 }
+                // Missing SDK callback is not a completed import. Keep the bounded
+                // 45-second cleanup scheduled in getOrWriteSeed() instead of
+                // deleting the seed 5 seconds after a provisional /submitted.
+                // This avoids a race with games that read the file asynchronously.
             }
         }
     }
