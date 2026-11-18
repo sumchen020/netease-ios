@@ -28,6 +28,7 @@ internal class GameReadyOverlay(
     private val manager = activity.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val handler = Handler(Looper.getMainLooper())
     private var root: View? = null
+    private var confirming = false
     private val timeout = Runnable {
         if (root != null) {
             dismiss()
@@ -63,12 +64,13 @@ internal class GameReadyOverlay(
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         })
 
-        panel.addView(TextView(activity).apply {
+        val description = TextView(activity).apply {
             text = "已看到欢迎提示或进入游戏主页？"
             textSize = 13f
             setTextColor(muted)
             setPadding(0, dp(6), 0, dp(12))
-        })
+        }
+        panel.addView(description)
 
         val actions = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -94,7 +96,18 @@ internal class GameReadyOverlay(
             }
             setPadding(dp(23), dp(9), dp(23), dp(9))
             isClickable = true
-            setOnClickListener { dismiss(); onConfirm() }
+            setOnClickListener {
+                if (confirming) return@setOnClickListener
+                confirming = true
+                handler.removeCallbacks(timeout)
+                description.text = "正在进入 iOS 登录桥接…"
+                cancel.isEnabled = false
+                isEnabled = false
+                // Keep the permitted overlay visible briefly during game-webview
+                // activation; Android restricts activity starts from background.
+                onConfirm()
+                handler.postDelayed({ dismiss() }, 3_500L)
+            }
         }
         actions.addView(cancel)
         actions.addView(confirm)
