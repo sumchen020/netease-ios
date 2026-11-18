@@ -126,9 +126,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (session == null && !uiState.busy) {
-            MpayBridgeSession.cleanup(this)
-        }
+        // Do not purge pending seed files on every return to the assistant.
+        // A callback-less MPay import may still be reading asynchronously;
+        // the bridge schedules bounded cleanup and onCreate handles leftovers.
         val current = uiState.currentGame
         if (current != null) {
             uiState = uiState.copy(
@@ -300,9 +300,9 @@ class MainActivity : ComponentActivity() {
                         override fun onSubmitted(gameId: String, confirmed: Boolean, usedSaf: Boolean) {
                             if (!ownsAttempt(attempt)) return
                             val text = if (confirmed) {
-                                "登录组件已确认接收。请回「${target.appLabel}」用同一账号重登，核对区服和角色。"
+                                "游戏登录组件已确认加载请求。请回「${target.appLabel}」通过实际显示的「重新登录」或「切换账号」入口登录同一账号，并核对区服、角色。"
                             } else {
-                                "请求已发送（无独立回调），回「${target.appLabel}」点「切换账号」重登核对即可。"
+                                "请求已发送，但游戏 SDK 未确认是否接受。回「${target.appLabel}」关闭旧登录弹窗，使用当前界面的「重新登录」或「切换账号」入口重登，核对区服和角色。"
                             }
                             complete(
                                 result = if (confirmed) "submitted" else "unconfirmed",
@@ -432,12 +432,12 @@ class MainActivity : ComponentActivity() {
                 }
 
                 submittedCurrent -> {
-                    message = "上次准备结果：登录组件已确认接收。回「$gameName」用同一账号重登并核对角色。"
+                    message = "上次 SDK 已确认加载请求。请回「$gameName」重新登录同一账号，并核对区服、角色。"
                     tone = StatusTone.Success
                 }
 
                 unconfirmedCurrent -> {
-                    message = "上次请求已发送，未收到明确回调。请回「$gameName」重登并核对角色。"
+                    message = "上次请求已发送，SDK 未确认是否接受。请回「$gameName」重新登录并核对角色。"
                     tone = StatusTone.Warning
                 }
 
@@ -452,7 +452,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 else -> {
-                    message = "请先在「$gameName」登录账号，再点击下方「一键准备 iOS 登录」；完成后回游戏通过「切换账号」重登。"
+                    message = "请先在「$gameName」正常登录账号，再点击「一键准备 iOS 登录」；准备后按游戏实际提供的「重新登录」或「切换账号」入口重登，并核对角色。"
                     tone = StatusTone.Neutral
                 }
             }
