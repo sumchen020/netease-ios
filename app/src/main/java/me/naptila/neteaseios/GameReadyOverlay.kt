@@ -41,7 +41,7 @@ internal class GameReadyOverlay(
 
         val isDark = (activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
-        val background = if (isDark) Color.rgb(35, 37, 44) else Color.WHITE
+        val panelColor = if (isDark) Color.rgb(35, 37, 44) else Color.WHITE
         val foreground = if (isDark) Color.WHITE else Color.rgb(20, 35, 57)
         val muted = if (isDark) Color.rgb(195, 202, 219) else Color.rgb(83, 97, 119)
         val blue = if (isDark) Color.rgb(152, 187, 255) else Color.rgb(35, 78, 156)
@@ -50,7 +50,7 @@ internal class GameReadyOverlay(
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(14), dp(16), dp(12))
             background = GradientDrawable().apply {
-                setColor(background)
+                setColor(panelColor)
                 cornerRadius = dp(18).toFloat()
                 setStroke(dp(1), if (isDark) Color.rgb(75, 91, 118) else Color.rgb(213, 224, 242))
             }
