@@ -3,6 +3,9 @@ package me.naptila.neteaseios
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.SystemClock
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import java.util.UUID
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -49,6 +52,18 @@ class MainActivity : ComponentActivity() {
     private var pendingGameVisitPaused: Boolean = false
     private var lastReturnedGamePackage: String? = null
     private var lastReturnedGameTimeMs: Long = 0L
+    private var gameReadyOverlay: GameReadyOverlay? = null
+    private var pendingOverlayPermissionPackage: String? = null
+
+    private val overlayPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            val expected = pendingOverlayPermissionPackage
+            pendingOverlayPermissionPackage = null
+            val game = uiState.currentGame
+            if (expected != null && game?.spec?.packageName == expected && !uiState.busy) {
+                launchGameForVisit(game.spec, forPrepare = true)
+            }
+        }
 
     private val directoryPicker =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -142,6 +157,8 @@ class MainActivity : ComponentActivity() {
                     onPrepareIosLogin = ::requestPrepareIosLogin,
                     onGameReadyContinue = ::confirmGameReadyAndPrepare,
                     onGameReadyCancel = ::cancelGameReadyPrompt,
+                    onOverlayPermissionRequest = ::requestOverlayPermission,
+                    onOverlayPermissionSkip = ::skipOverlayPermission,
                     onRefreshDiagnosticLog = ::refreshDiagnosticLog,
                     onClearDiagnosticLog = ::clearDiagnosticLog
                 )
@@ -169,6 +186,13 @@ class MainActivity : ComponentActivity() {
         }
         refreshFromPrefs(updateStatusMessage = !uiState.busy)
 
+        // If the user switched back to the helper instead of using the game
+        // overlay, remove it and fall back to the in-app confirmation dialog.
+        if (gameReadyOverlay != null) {
+            gameReadyOverlay?.dismiss()
+            gameReadyOverlay = null
+        }
+
         val returningPackage = pendingGameVisitPackage
         if (returningPackage != null && pendingGameVisitPaused) {
             val shouldPrepare = pendingGameVisitForPrepare
@@ -187,6 +211,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        gameReadyOverlay?.dismiss()
+        gameReadyOverlay = null
         session?.close()
         session = null
         super.onDestroy()
@@ -228,6 +254,8 @@ class MainActivity : ComponentActivity() {
         pendingGameVisitPaused = false
         pendingGameVisitForPrepare = false
         lastReturnedGamePackage = null
+        gameReadyOverlay?.dismiss()
+        gameReadyOverlay = null
         val withIcon = GameTarget.inspect(this, game.spec, loadIcon = true)
         history.rememberPackage(withIcon.spec.packageName)
         persistSelectedSpec(withIcon.spec)
@@ -362,9 +390,12 @@ class MainActivity : ComponentActivity() {
         val recentlyReturned = lastReturnedGamePackage == game.spec.packageName &&
             SystemClock.elapsedRealtime() - lastReturnedGameTimeMs in 0L..RECENT_GAME_RETURN_MS
         if (recentlyReturned) {
-            // Recent activity is not proof of login. The bridge still requires
-            // an independent, fresh gameContextInfo response before seed writing.
+            // A recent return is not proof of login; live gameContextInfo still
+            // gates writing in the bridge.
             beginPrepare()
+        } else if (!Settings.canDrawOverlays(this) &&
+            !MpayBridgeSession.prefs(this).getBoolean("game_overlay_prompted", false)) {
+            uiState = uiState.copy(overlayPermissionExplanation = true)
         } else {
             launchGameForVisit(game.spec, forPrepare = true)
         }
@@ -386,7 +417,69 @@ class MainActivity : ComponentActivity() {
             pendingGameVisitPackage = null
             pendingGameVisitForPrepare = false
             showMessage("无法打开「${spec.displayName}」，请手动启动游戏。", StatusTone.Warning)
+            return
         }
+        if (forPrepare && Settings.canDrawOverlays(this)) {
+            val overlay = GameReadyOverlay(
+                activity = this,
+                onConfirm = { confirmFromGameOverlay(spec.packageName) },
+                onCancel = { cancelFromGameOverlay() }
+            )
+            if (overlay.show()) {
+                gameReadyOverlay = overlay
+            }
+            // On a device that suppresses overlays for this game, the existing
+            // return-to-assistant dialog stays available as a fallback.
+        }
+    }
+
+    private fun confirmFromGameOverlay(packageName: String) {
+        if (uiState.busy || uiState.currentGame?.spec?.packageName != packageName) return
+        // The overlay keeps itself visible briefly while the game-webview bridge
+        // launches, then removes itself automatically.
+        gameReadyOverlay = null
+        pendingGameVisitPackage = null
+        pendingGameVisitForPrepare = false
+        pendingGameVisitPaused = false
+        lastReturnedGamePackage = packageName
+        lastReturnedGameTimeMs = SystemClock.elapsedRealtime()
+        beginPrepare()
+    }
+
+    private fun cancelFromGameOverlay() {
+        gameReadyOverlay = null
+        pendingGameVisitPackage = null
+        pendingGameVisitForPrepare = false
+        pendingGameVisitPaused = false
+        uiState = uiState.copy(gameReadyConfirmation = false)
+        showMessage("已取消准备。", StatusTone.Neutral)
+    }
+
+    private fun requestOverlayPermission() {
+        val game = uiState.currentGame ?: return
+        uiState = uiState.copy(overlayPermissionExplanation = false)
+        MpayBridgeSession.prefs(this).edit().putBoolean("game_overlay_prompted", true).apply()
+        if (Settings.canDrawOverlays(this)) {
+            launchGameForVisit(game.spec, forPrepare = true)
+            return
+        }
+        pendingOverlayPermissionPackage = game.spec.packageName
+        try {
+            overlayPermissionLauncher.launch(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                    .setData(Uri.parse("package:$packageName"))
+            )
+        } catch (_: Exception) {
+            pendingOverlayPermissionPackage = null
+            launchGameForVisit(game.spec, forPrepare = true)
+        }
+    }
+
+    private fun skipOverlayPermission() {
+        uiState = uiState.copy(overlayPermissionExplanation = false)
+        MpayBridgeSession.prefs(this).edit().putBoolean("game_overlay_prompted", true).apply()
+        val spec = uiState.currentGame?.spec ?: return
+        launchGameForVisit(spec, forPrepare = true)
     }
 
     private fun confirmGameReadyAndPrepare() {
