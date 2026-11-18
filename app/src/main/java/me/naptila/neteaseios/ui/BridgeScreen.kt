@@ -187,7 +187,6 @@ fun BridgeScreen(
                     state = state,
                     dark = dark,
                     onSelectTransportMode = onSelectTransportMode,
-                    onToggleNonEmptyToken = onToggleNonEmptyToken,
                     onAuthorizeSafDirectory = onAuthorizeSafDirectory,
                     onPrepareIosLogin = onPrepareIosLogin
                 )
