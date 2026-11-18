@@ -38,7 +38,13 @@ internal object SeedStorage {
 
     fun getTransportMode(context: Context, packageName: String): SeedTransportMode {
         val raw = MpayBridgeSession.prefs(context).getString("seed_mode_$packageName", null)
-        return SeedTransportMode.fromPref(raw)
+        // Apply the game's recommended default only when there is no explicit user choice.
+        // A user-selected transport remains sticky per game.
+        return if (raw == null && packageName == "com.netease.onmyoji") {
+            SeedTransportMode.SAF_MEDIA
+        } else {
+            SeedTransportMode.fromPref(raw)
+        }
     }
 
     fun setTransportMode(context: Context, packageName: String, mode: SeedTransportMode) {
