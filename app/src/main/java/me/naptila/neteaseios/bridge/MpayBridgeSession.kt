@@ -16,6 +16,8 @@ import java.net.SocketTimeoutException
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import java.util.Locale
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -74,6 +76,7 @@ class MpayBridgeSession(
     }
 
     fun start() {
+        BridgeDiagnosticLog.record(appContext, target.spec.packageName, BridgeLogEvent.SESSION_STARTED)
         prefs(appContext).edit()
             .putString("state", "preparing")
             .putString("state_package", target.spec.packageName)
@@ -129,6 +132,7 @@ class MpayBridgeSession(
 
                     val route = request.path.substring(base.length)
                     if (request.method == "GET" && route == "/page") {
+                        BridgeDiagnosticLog.record(appContext, target.spec.packageName, BridgeLogEvent.PAGE_OPENED)
                         reply(
                             socket,
                             200,
@@ -163,6 +167,7 @@ class MpayBridgeSession(
                                 return@use
                             }
 
+                            BridgeDiagnosticLog.record(appContext, target.spec.packageName, BridgeLogEvent.CONTEXT_RECEIVED)
                             capturedGameId = parsed.gameId
                             prefs(appContext).edit()
                                 .putString("last_game_id_${target.spec.packageName}", parsed.gameId)
@@ -184,6 +189,10 @@ class MpayBridgeSession(
                                 return@use
                             }
 
+                            BridgeDiagnosticLog.record(
+                                appContext, target.spec.packageName,
+                                if (seed.usedSaf) BridgeLogEvent.SAF_VERIFIED else BridgeLogEvent.CACHE_WRITTEN
+                            )
                             val command = JSONObject()
                                 .put("methodId", "execute_extend_func")
                                 .put(
@@ -198,7 +207,23 @@ class MpayBridgeSession(
                                 .put("ok", true)
                                 .put("command", command)
                                 .toString()
+                            BridgeDiagnosticLog.record(appContext, target.spec.packageName, BridgeLogEvent.LOAD_REQUEST_READY)
                             reply(socket, 200, "application/json", resp)
+                        }
+
+                        "/stage" -> {
+                            // Accept only fixed event identifiers; never persist arbitrary web input.
+                            val event = when (input.optString("event")) {
+                                "load_dispatched" -> BridgeLogEvent.LOAD_DISPATCHED
+                                "sdk_callback_seen" -> BridgeLogEvent.SDK_CALLBACK_RECEIVED
+                                else -> null
+                            }
+                            if (event == null || preparedSeed == null) {
+                                reply(socket, 400, "application/json", "{\"ok\":false}")
+                            } else {
+                                BridgeDiagnosticLog.record(appContext, target.spec.packageName, event)
+                                reply(socket, 200, "application/json", "{\"ok\":true}")
+                            }
                         }
 
                         "/submitted" -> {
@@ -217,6 +242,15 @@ class MpayBridgeSession(
                             val gameId = capturedGameId
                             val first = resultDelivered.compareAndSet(false, true)
                             if (first) {
+                                BridgeDiagnosticLog.record(
+                                    appContext, target.spec.packageName,
+                                    when {
+                                        confirmed -> BridgeLogEvent.SDK_CONFIRMED
+                                        callbackReason == "manual_return" -> BridgeLogEvent.USER_LEFT_EARLY
+                                        callbackReason == "unrecognized_callback" -> BridgeLogEvent.SDK_UNKNOWN_CALLBACK
+                                        else -> BridgeLogEvent.SDK_TIMEOUT
+                                    }
+                                )
                                 unconfirmedCleanupDeferred = !confirmed
                                 prefs(appContext).edit()
                                     .putString("state", if (confirmed) "submitted" else "unconfirmed")
@@ -242,6 +276,18 @@ class MpayBridgeSession(
                                 "sdk_rejected" -> "SDK 拒绝了本次登录准备，当前游戏仍需适配。"
                                 else -> "本次准备未完成，请返回游戏关闭当前页面后重试。"
                             }
+                            BridgeDiagnosticLog.record(
+                                appContext, target.spec.packageName,
+                                when (reason) {
+                                    "sdk_read_failed" -> BridgeLogEvent.SDK_READ_FAILED
+                                    "sdk_invalid_session", "sdk_rejected" -> BridgeLogEvent.SDK_REJECTED
+                                    "load_not_dispatched" -> BridgeLogEvent.LOAD_NOT_DISPATCHED
+                                    "not_logged_in" -> BridgeLogEvent.NO_ACCOUNT
+                                    "no_callback", "bridge_missing" -> BridgeLogEvent.BRIDGE_NOT_READY
+                                    "storage_failed", "directory_required" -> BridgeLogEvent.STORAGE_ERROR
+                                    else -> BridgeLogEvent.REQUEST_FAILED
+                                }
+                            )
                             reply(socket, 200, "application/json", "{\"ok\":true}")
                             fail(message)
                         }
@@ -305,6 +351,7 @@ class MpayBridgeSession(
 
     private fun fail(message: String) {
         if (!resultDelivered.compareAndSet(false, true)) return
+        BridgeDiagnosticLog.record(appContext, target.spec.packageName, BridgeLogEvent.REQUEST_FAILED)
         prefs(appContext).edit()
             .putString("state", "failed")
             .putString("state_package", target.spec.packageName)
@@ -359,4 +406,69 @@ class MpayBridgeSession(
             out.flush()
         }
     }
+}
+
+/**
+ * Bounded, local-only diagnostic events. Never writes UID, login tokens, payloads,
+ * arbitrary SDK error messages or native response objects to the event history.
+ */
+internal enum class BridgeLogEvent(val label: String) {
+    PREPARE_TAPPED("开始准备 iOS 登录"),
+    TRANSPORT_SAF("准备方式：SAF 共享目录"),
+    TRANSPORT_CACHE("准备方式：标准缓存"),
+    PLACEHOLDER_ON("兼容设置：非空占位已开启"),
+    PLACEHOLDER_OFF("兼容设置：非空占位已关闭"),
+    SESSION_STARTED("桥接会话已启动"),
+    PAGE_OPENED("游戏桥接页已打开"),
+    CONTEXT_RECEIVED("收到账号上下文（不保存内容）"),
+    SAF_VERIFIED("临时文件写入完成且 SAF 读回一致"),
+    CACHE_WRITTEN("缓存临时文件写入完成"),
+    LOAD_REQUEST_READY("已生成 SDK 加载请求"),
+    LOAD_DISPATCHED("网页桥调用已发出（非 SDK 成功证明）"),
+    SDK_CALLBACK_RECEIVED("收到 SDK 回调（内容未记录）"),
+    SDK_CONFIRMED("SDK 返回成功码，游戏角色需另行核对"),
+    SDK_UNKNOWN_CALLBACK("SDK 回调无法识别，结果未知"),
+    SDK_TIMEOUT("30 秒未得到 SDK 确认"),
+    USER_LEFT_EARLY("提前返回游戏，无法确认 SDK 结果"),
+    SDK_READ_FAILED("SDK 报告无法读取准备文件"),
+    SDK_REJECTED("SDK 拒绝或报告登录格式无效"),
+    LOAD_NOT_DISPATCHED("网页桥未能调用 SDK 加载方法"),
+    NO_ACCOUNT("未读取到已登录账号"),
+    STORAGE_ERROR("目录授权或文件写入失败"),
+    BRIDGE_NOT_READY("游戏网页桥未就绪"),
+    REQUEST_FAILED("本次准备未完成")
+}
+
+internal object BridgeDiagnosticLog {
+    private const val MAX_ENTRIES = 60
+    private const val MAX_TEXT_LENGTH = 12_000
+
+    @Synchronized
+    fun record(context: Context, packageName: String, event: BridgeLogEvent) {
+        if (!BridgeProtocol.isValidPackageName(packageName)) return
+        val prefs = MpayBridgeSession.prefs(context)
+        val key = "bridge_log_$packageName"
+        val old = prefs.getString(key, "").orEmpty().lineSequence()
+            .filter { it.isNotBlank() }.takeLastSafe(MAX_ENTRIES - 1)
+        val time = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+        val updated = (old + "$time  ${event.label}").takeLast(MAX_ENTRIES)
+        prefs.edit().putString(key, updated.joinToString("\n").takeLast(MAX_TEXT_LENGTH)).apply()
+    }
+
+    @Synchronized
+    fun entries(context: Context, packageName: String): List<String> {
+        if (!BridgeProtocol.isValidPackageName(packageName)) return emptyList()
+        return MpayBridgeSession.prefs(context)
+            .getString("bridge_log_$packageName", "").orEmpty()
+            .lineSequence().filter { it.isNotBlank() }.take(MAX_ENTRIES).toList()
+    }
+
+    @Synchronized
+    fun clear(context: Context, packageName: String) {
+        if (!BridgeProtocol.isValidPackageName(packageName)) return
+        MpayBridgeSession.prefs(context).edit().remove("bridge_log_$packageName").apply()
+    }
+
+    private fun Sequence<String>.takeLastSafe(limit: Int): List<String> =
+        toList().takeLast(limit)
 }
