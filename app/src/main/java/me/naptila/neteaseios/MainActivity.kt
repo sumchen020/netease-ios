@@ -355,10 +355,12 @@ class MainActivity : ComponentActivity() {
                     if (ownsAttempt(attempt)) complete("未找到已安装的「${spec.displayName}」。", StatusTone.Error)
                 }
             } catch (_: DirectoryAccessRequired) {
+                BridgeDiagnosticLog.record(this, spec.packageName, BridgeLogEvent.STORAGE_ERROR)
                 runOnUiThread {
                     if (ownsAttempt(attempt)) launchDirectoryPicker(spec, resumePrepare = true)
                 }
             } catch (e: SeedStorageException) {
+                BridgeDiagnosticLog.record(this, spec.packageName, BridgeLogEvent.STORAGE_ERROR)
                 runOnUiThread {
                     if (ownsAttempt(attempt)) complete(e.message ?: "准备文件通道不可用。", StatusTone.Error)
                 }
