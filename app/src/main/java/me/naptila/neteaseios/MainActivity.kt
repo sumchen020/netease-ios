@@ -297,13 +297,23 @@ class MainActivity : ComponentActivity() {
                     transportMode = selectedMode,
                     nonEmptyToken = useNonEmptyToken,
                     listener = object : MpayBridgeSession.Listener {
-                        override fun onSubmitted(gameId: String, confirmed: Boolean, usedSaf: Boolean) {
+                        override fun onSubmitted(gameId: String, confirmed: Boolean, usedSaf: Boolean, callbackReason: String) {
                             if (!ownsAttempt(attempt)) return
-                            val text = if (confirmed) {
-                                "游戏登录组件已确认加载请求。请回「${target.appLabel}」通过实际显示的「重新登录」或「切换账号」入口登录同一账号，并核对区服、角色。"
+                            val localWrite = if (usedSaf) {
+                                "共享目录文件已写入且读回校验通过。"
                             } else {
-                                "请求已发送，但游戏 SDK 未确认是否接受。回「${target.appLabel}」关闭旧登录弹窗，使用当前界面的「重新登录」或「切换账号」入口重登，核对区服和角色。"
+                                "缓存临时文件已写入，未单独验证游戏端可读取。"
                             }
+                            val status = when {
+                                confirmed -> "游戏 SDK 返回成功回调，但服务器最终角色仍需在游戏内核对。"
+                                callbackReason == "manual_return" ->
+                                    "你在 SDK 返回结果之前离开桥接页，无法判断 SDK 是否接受。"
+                                callbackReason == "unrecognized_callback" ->
+                                    "收到了 SDK 回调，但格式不符合当前解析规则，结果未知，需要适配回调格式。"
+                                else ->
+                                    "等待 12 秒仍未收到 SDK 回调，结果未知；不能判定 iOS 登录成功。"
+                            }
+                            val text = "$localWrite$status 请回「${target.appLabel}」使用实际显示的登录入口核对区服与角色。"
                             complete(
                                 result = if (confirmed) "submitted" else "unconfirmed",
                                 text = text,
