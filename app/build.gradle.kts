@@ -29,8 +29,8 @@ android {
         applicationId = "me.naptila.neteaseios"
         minSdk = 28
         targetSdk = 37
-        versionCode = System.getenv("APP_VERSION_CODE")?.toIntOrNull() ?: 6
-        versionName = System.getenv("APP_VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "1.3.1"
+        versionCode = 7
+        versionName = "1.4.0"
         buildConfigField("String", "ACTIONS_RUN_NUMBER", "\"$actionsRunNumber\"")
         buildConfigField("String", "SOURCE_COMMIT", "\"$sourceCommit\"")
     }
@@ -39,6 +39,7 @@ android {
         if (hasReleaseKeystore) {
             create("release") {
                 storeFile = file(releaseStoreFile!!)
+                storeType = "PKCS12"
                 storePassword = releaseStorePassword
                 keyAlias = releaseKeyAlias
                 keyPassword = releaseKeyPassword
@@ -48,10 +49,10 @@ android {
 
     buildTypes {
         release {
-            signingConfig = if (hasReleaseKeystore) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            // Never sign an official release with the rotating CI Debug key.
+            // Missing signing credentials are rejected by verifyReleaseSigning.
+            if (hasReleaseKeystore) {
+                signingConfig = signingConfigs.getByName("release")
             }
             optimization {
                 enable = false
@@ -78,4 +79,20 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     debugImplementation(libs.androidx.compose.ui.tooling)
+}
+
+// Keep assembleDebug working without release secrets, while refusing to build
+// or publish an unsigned / randomly debug-signed release APK.
+val verifyReleaseSigning = tasks.register("verifyReleaseSigning") {
+    group = "verification"
+    description = "Require fixed Release signing credentials before any release build."
+    doLast {
+        check(hasReleaseKeystore) {
+            "Release signing is not configured. Configure RELEASE_STORE_FILE, " +
+                "RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS, and RELEASE_KEY_PASSWORD."
+        }
+    }
+}
+tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    dependsOn(verifyReleaseSigning)
 }
