@@ -886,6 +886,7 @@ private fun StatusFeedbackBanner(
     val summary = when {
         busy -> "正在检测游戏账号并准备…"
         tone == StatusTone.Error -> when {
+            message.contains("通信超时") -> "助手通信超时，检查省电与后台限制"
             message.contains("游戏网页桥未就绪") -> "游戏网页桥未就绪，未完成准备"
             message.contains("没有收到游戏接口响应") -> "游戏账号接口未响应，未完成准备"
             message.contains("未读取到已登录") || message.contains("未检测到游戏登录账号") ->
