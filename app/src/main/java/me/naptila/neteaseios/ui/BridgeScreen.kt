@@ -200,7 +200,7 @@ fun BridgeScreen(
             onDismissRequest = onGameReadyCancel,
             title = { Text("确认游戏登录状态") },
             text = {
-                Text("已看到「欢迎进入游戏」提示，或已登录游戏账号？")
+                Text("已看到「欢迎进入游戏」提示，或已登录游戏账号？点击「确定」后将切回游戏并自动打开桥接页，请稍候。")
             },
             confirmButton = {
                 Button(onClick = onGameReadyContinue) { Text("确定") }
