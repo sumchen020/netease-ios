@@ -1,21 +1,53 @@
 name: Release APK
 
 on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Stable release version tag (must match Gradle versionName)"
+        required: true
+        default: "v1.4.0"
+        type: string
   push:
     tags:
-      - '*'
+      - 'v*'
 
 permissions:
   contents: write
 
+concurrency:
+  group: netease-ios-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
-    name: Build & Publish Release
+    name: Build, Verify & Publish Signed Release
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release tag and main-branch ancestry
+        shell: bash
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            [[ "${GITHUB_REF}" == "refs/heads/main" ]] || { echo "::error::Run manual releases only from main"; exit 1; }
+            TAG="${INPUT_RELEASE_TAG}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Invalid semver release tag"; exit 1; }
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor HEAD origin/main || { echo "::error::Release commit is not on main"; exit 1; }
+          echo "RELEASE_TAG=${TAG}" >> "${GITHUB_ENV}"
+          echo "RELEASE_VERSION=${TAG#v}" >> "${GITHUB_ENV}"
 
       - name: Set up JDK 25
         uses: actions/setup-java@v4
@@ -23,59 +55,97 @@ jobs:
           distribution: temurin
           java-version: '25'
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK 37 and signing tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Accept Android SDK licenses
-        run: |
-          yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
-
-      - name: Prepare version and optional signing keystore
+      - name: Require permanent Release signing credentials
+        shell: bash
         env:
           SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          SIGNING_CERT_SHA256: ${{ secrets.SIGNING_CERT_SHA256 }}
         run: |
-          TAG_NAME="${GITHUB_REF_NAME}"
-          VERSION_NAME="${TAG_NAME#v}"
-          echo "APP_VERSION_NAME=${VERSION_NAME}" >> "${GITHUB_ENV}"
-          echo "APP_VERSION_CODE=${GITHUB_RUN_NUMBER}" >> "${GITHUB_ENV}"
+          set -euo pipefail
+          for required in SIGNING_KEYSTORE_BASE64 SIGNING_STORE_PASSWORD SIGNING_KEY_ALIAS SIGNING_KEY_PASSWORD SIGNING_CERT_SHA256; do
+            if [[ -z "${!required:-}" ]]; then
+              echo "::error::Missing required GitHub Actions secret: ${required}"
+              exit 1
+            fi
+          done
 
-          if [ -n "${SIGNING_KEYSTORE_BASE64}" ]; then
-            KEYSTORE_PATH="${RUNNER_TEMP}/release-keystore.jks"
-            printf '%s' "${SIGNING_KEYSTORE_BASE64}" | tr -d ' \n\r\t' | base64 -d > "${KEYSTORE_PATH}"
-            echo "RELEASE_STORE_FILE=${KEYSTORE_PATH}" >> "${GITHUB_ENV}"
-            echo "RELEASE_STORE_PASSWORD=${SIGNING_STORE_PASSWORD}" >> "${GITHUB_ENV}"
-            echo "RELEASE_KEY_ALIAS=${SIGNING_KEY_ALIAS}" >> "${GITHUB_ENV}"
-            echo "RELEASE_KEY_PASSWORD=${SIGNING_KEY_PASSWORD}" >> "${GITHUB_ENV}"
-          fi
+          KEYSTORE_PATH="${RUNNER_TEMP}/release-keystore.p12"
+          printf '%s' "${SIGNING_KEYSTORE_BASE64}" | tr -d ' \n\r\t' | base64 -d > "${KEYSTORE_PATH}"
+          chmod 600 "${KEYSTORE_PATH}"
+          test -s "${KEYSTORE_PATH}"
 
-      - name: Build Release APK
-        run: bash ./gradlew assembleRelease --no-daemon
+          keytool -list -storetype PKCS12 -keystore "${KEYSTORE_PATH}" \
+            -storepass "${SIGNING_STORE_PASSWORD}" -alias "${SIGNING_KEY_ALIAS}" > /dev/null
 
-      - name: Collect APK and generate SHA-256 checksum
+          {
+            echo "RELEASE_STORE_FILE=${KEYSTORE_PATH}"
+            echo "RELEASE_STORE_PASSWORD=${SIGNING_STORE_PASSWORD}"
+            echo "RELEASE_KEY_ALIAS=${SIGNING_KEY_ALIAS}"
+            echo "RELEASE_KEY_PASSWORD=${SIGNING_KEY_PASSWORD}"
+            echo "EXPECTED_SIGNING_SHA256=${SIGNING_CERT_SHA256}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Build signed Release APK
+        shell: bash
         run: |
+          set -euo pipefail
+          bash ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Verify version, package, signing certificate and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "${APK}"
+
+          PACKAGE_INFO="$("${ANDROID_HOME}/build-tools/36.0.0/aapt" dump badging "${APK}" | grep '^package:')"
+          echo "${PACKAGE_INFO}"
+          [[ "${PACKAGE_INFO}" == *"name='me.naptila.neteaseios'"* ]] || exit 1
+          [[ "${PACKAGE_INFO}" == *"versionName='${RELEASE_VERSION}'"* ]] || exit 1
+          [[ "${PACKAGE_INFO}" == *"versionCode='7'"* ]] || exit 1
+
+          SIGNATURE_INFO="$("${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose --print-certs "${APK}")"
+          printf '%s\n' "${SIGNATURE_INFO}"
+          echo "${SIGNATURE_INFO}" | grep -q "Verified using v2 scheme (APK Signature Scheme v2): true"
+          ACTUAL_FP="$(printf '%s\n' "${SIGNATURE_INFO}" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1 | tr -d ': \r\n' | tr '[:lower:]' '[:upper:]')"
+          EXPECTED_FP="$(printf '%s' "${EXPECTED_SIGNING_SHA256}" | tr -d ': \r\n' | tr '[:lower:]' '[:upper:]')"
+          [[ "${ACTUAL_FP}" =~ ^[0-9A-F]{64}$ ]] || { echo "::error::Could not read signing fingerprint"; exit 1; }
+          [[ "${ACTUAL_FP}" == "${EXPECTED_FP}" ]] || { echo "::error::Unexpected signing certificate; release blocked"; exit 1; }
+
           mkdir -p dist
-          APK_FILE=$(find app/build/outputs/apk/release -maxdepth 2 -name "*.apk" | head -n 1)
-          if [ -z "${APK_FILE}" ]; then
-            echo "No APK found under app/build/outputs/apk/release" >&2
-            exit 1
-          fi
-          OUT_NAME="netease-ios-${GITHUB_REF_NAME}.apk"
-          cp "${APK_FILE}" "dist/${OUT_NAME}"
+          OUT_NAME="netease-ios-${RELEASE_TAG}.apk"
+          cp "${APK}" "dist/${OUT_NAME}"
           (cd dist && sha256sum "${OUT_NAME}" > "${OUT_NAME}.sha256")
 
-      - name: Clean up temporary keystore
+      - name: Remove temporary signing keystore
         if: always()
-        run: rm -f "${RUNNER_TEMP}/release-keystore.jks"
+        run: rm -f "${RUNNER_TEMP}/release-keystore.p12"
 
-      - name: Create GitHub Release
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ env.RELEASE_TAG }}
+          draft: false
+          prerelease: false
           generate_release_notes: true
+          body_path: RELEASE_NOTES.md
           files: |
-            dist/netease-ios-${{ github.ref_name }}.apk
-            dist/netease-ios-${{ github.ref_name }}.apk.sha256
+            dist/netease-ios-${{ env.RELEASE_TAG }}.apk
+            dist/netease-ios-${{ env.RELEASE_TAG }}.apk.sha256
