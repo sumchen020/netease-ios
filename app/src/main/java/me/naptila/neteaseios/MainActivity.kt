@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import android.widget.Toast
 import java.util.UUID
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -504,22 +505,14 @@ class MainActivity : ComponentActivity() {
         val spec = uiState.currentGame?.spec ?: return
         uiState = uiState.copy(gameReadyConfirmation = false)
         BridgeDiagnosticLog.record(this, spec.packageName, BridgeLogEvent.ASSISTANT_CONFIRMED)
-        // In the no-overlay flow the user has returned to this assistant,
-        // which placed the game in the background. Resume the selected game
-        // first, then run the same game-side account check and MPay bridge.
-        val opened = runCatching { GameTarget.open(this, spec.packageName) }.getOrDefault(false)
-        if (!opened) {
-            showMessage("无法重新打开「${spec.displayName}」，本次未启动桥接。", StatusTone.Error)
-            return
-        }
-        BridgeDiagnosticLog.record(this, spec.packageName, BridgeLogEvent.GAME_REOPENED_BEFORE_BRIDGE)
-        window.decorView.postDelayed({
-            if (!isFinishing && !isDestroyed && !uiState.busy &&
-                uiState.currentGame?.spec?.packageName == spec.packageName) {
-                beginPrepare()
-            }
-        }, 1300L)
-        showMessage("已重新打开游戏，正在进入 iOS 登录桥接…", StatusTone.Neutral)
+        // Prepare the local bridge while the assistant is still foreground.
+        // The previous implementation posted the entire preparation task to
+        // decorView *after* opening the game; Android could defer that view
+        // callback for tens of seconds once the assistant was backgrounded.
+        // Only after the bridge is ready do we resume the game, then start
+        // the same native game WebView bridge used by the overlay path.
+        Toast.makeText(this, "已确认，正在切回游戏并启动桥接…", Toast.LENGTH_LONG).show()
+        beginPrepare(reopenGameBeforeBridge = true)
     }
 
     private fun cancelGameReadyPrompt() {
@@ -534,7 +527,7 @@ class MainActivity : ComponentActivity() {
         const val RECENT_GAME_RETURN_MS = 3 * 60 * 1000L
     }
 
-    private fun beginPrepare() {
+    private fun beginPrepare(reopenGameBeforeBridge: Boolean = false) {
         if (uiState.busy) return
         val game = uiState.currentGame ?: return
         val spec = game.spec
@@ -557,7 +550,11 @@ class MainActivity : ComponentActivity() {
             busy = true,
             submittedCurrent = false,
             unconfirmedCurrent = false,
-            statusMessage = "正在检测「${spec.displayName}」游戏账号…",
+            statusMessage = if (reopenGameBeforeBridge) {
+                "正在准备桥接并切回「${spec.displayName}」…"
+            } else {
+                "正在检测「${spec.displayName}」游戏账号…"
+            },
             statusTone = StatusTone.Neutral
         )
 
@@ -619,6 +616,22 @@ class MainActivity : ComponentActivity() {
                     session?.close()
                     session = next
                     refreshFromPrefs(updateStatusMessage = false)
+                    if (reopenGameBeforeBridge) {
+                        val opened = runCatching {
+                            GameTarget.open(this, spec.packageName)
+                        }.getOrDefault(false)
+                        if (!opened) {
+                            next.close()
+                            complete(
+                                "无法重新打开「${spec.displayName}」，本次未启动桥接。",
+                                StatusTone.Error
+                            )
+                            return@runOnUiThread
+                        }
+                        BridgeDiagnosticLog.record(
+                            this, spec.packageName, BridgeLogEvent.GAME_REOPENED_BEFORE_BRIDGE
+                        )
+                    }
                     next.start()
                 }
             } catch (_: PackageManager.NameNotFoundException) {
