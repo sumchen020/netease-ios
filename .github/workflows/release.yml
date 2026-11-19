@@ -92,22 +92,23 @@ jobs:
           keytool -list -storetype PKCS12 -keystore "${KEYSTORE_PATH}" \
             -storepass "${SIGNING_STORE_PASSWORD}" -alias "${SIGNING_KEY_ALIAS}" > /dev/null
 
-          {
-            echo "RELEASE_STORE_FILE=${KEYSTORE_PATH}"
-            echo "RELEASE_STORE_PASSWORD=${SIGNING_STORE_PASSWORD}"
-            echo "RELEASE_KEY_ALIAS=${SIGNING_KEY_ALIAS}"
-            echo "RELEASE_KEY_PASSWORD=${SIGNING_KEY_PASSWORD}"
-            echo "EXPECTED_SIGNING_SHA256=${SIGNING_CERT_SHA256}"
-          } >> "${GITHUB_ENV}"
+          # Never persist signing passwords into GITHUB_ENV or workflow outputs.
 
       - name: Build signed Release APK
         shell: bash
+        env:
+          RELEASE_STORE_FILE: ${{ runner.temp }}/release-keystore.p12
+          RELEASE_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           bash ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
       - name: Verify version, package, signing certificate and checksum
         shell: bash
+        env:
+          EXPECTED_SIGNING_SHA256: ${{ secrets.SIGNING_CERT_SHA256 }}
         run: |
           set -euo pipefail
           APK="app/build/outputs/apk/release/app-release.apk"
