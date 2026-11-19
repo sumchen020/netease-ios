@@ -12,6 +12,11 @@ val hasReleaseKeystore = releaseStoreFile != null &&
     !releaseKeyAlias.isNullOrBlank() &&
     !releaseKeyPassword.isNullOrBlank()
 
+val actionsRunNumber = providers.environmentVariable("GITHUB_RUN_NUMBER").orNull
+    ?.takeIf { it.matches(Regex("[0-9]+")) }.orEmpty()
+val sourceCommit = providers.environmentVariable("GITHUB_SHA").orNull
+    ?.takeIf { it.matches(Regex("[0-9a-fA-F]{40}")) }?.take(7).orEmpty()
+
 android {
     namespace = "me.naptila.neteaseios"
     compileSdk {
@@ -26,6 +31,8 @@ android {
         targetSdk = 37
         versionCode = System.getenv("APP_VERSION_CODE")?.toIntOrNull() ?: 6
         versionName = System.getenv("APP_VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "1.3.1"
+        buildConfigField("String", "ACTIONS_RUN_NUMBER", "\"$actionsRunNumber\"")
+        buildConfigField("String", "SOURCE_COMMIT", "\"$sourceCommit\"")
     }
 
     signingConfigs {
@@ -57,6 +64,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

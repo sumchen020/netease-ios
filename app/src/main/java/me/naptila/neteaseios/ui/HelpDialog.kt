@@ -24,6 +24,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import me.naptila.neteaseios.BuildConfig
 
 /**
  * Short in-app help. Official game UI and server results remain authoritative.
@@ -142,6 +143,20 @@ internal fun HelpDialog(
                     if (diagnosticsAvailable) {
                         TextButton(onClick = onOpenDiagnostics) { Text("遇到问题？查看诊断日志") }
                     }
+
+                    HorizontalDivider()
+                    Text(
+                        "关于",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "应用版本 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）\n" +
+                            "构建类型 ${BuildConfig.BUILD_TYPE}\n" +
+                            "Actions 构建编号 ${BuildConfig.ACTIONS_RUN_NUMBER.ifEmpty { "未记录" }}\n" +
+                            "提交 SHA ${BuildConfig.SOURCE_COMMIT.ifEmpty { "未记录" }}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
             }
         }

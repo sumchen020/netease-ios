@@ -241,9 +241,7 @@ fun BridgeScreen(
                 )
 
                 StatusFeedbackBanner(
-                    busy = state.busy,
-                    message = state.statusMessage,
-                    tone = state.statusTone,
+                    state = state,
                     dark = dark
                 )
 
@@ -794,7 +792,7 @@ private fun InstalledAppRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 if (confirmed) {
-                    Text("上次准备已确认", style = MaterialTheme.typography.labelSmall, color = scheme.primary)
+                    Text("上次登录组件已接收", style = MaterialTheme.typography.labelSmall, color = scheme.primary)
                 }
                 Text(
                     text = item.spec.packageName,
@@ -861,11 +859,12 @@ private fun StatusPill(
 
 @Composable
 private fun StatusFeedbackBanner(
-    busy: Boolean,
-    message: String,
-    tone: StatusTone,
+    state: BridgeUiState,
     dark: Boolean
 ) {
+    val busy = state.busy
+    val message = state.statusMessage
+    val tone = state.statusTone
     val scheme = MaterialTheme.colorScheme
     val targetBg = when {
         busy -> scheme.primaryContainer
@@ -886,7 +885,7 @@ private fun StatusFeedbackBanner(
     val summary = when {
         busy -> "正在检测游戏账号并准备…"
         tone == StatusTone.Error -> when {
-            message.contains("通信超时") -> "助手通信超时，检查省电与后台限制"
+            message.contains("通信超时") -> "助手通信超时，请查看详情"
             message.contains("游戏网页桥未就绪") -> "游戏网页桥未就绪，未完成准备"
             message.contains("没有收到游戏接口响应") -> "游戏账号接口未响应，未完成准备"
             message.contains("未读取到已登录") || message.contains("未检测到游戏登录账号") ->
@@ -900,13 +899,12 @@ private fun StatusFeedbackBanner(
             message.contains("未能完成 iOS 登录准备") -> "游戏桥接超时，请查看原因"
             else -> "准备未完成，请查看原因"
         }
-        message.startsWith("兼容模式已提交 iOS 登录准备") ->
-            "兼容模式已准备，请返回游戏核对角色"
-        message.startsWith("已提交 iOS 登录准备") ->
-            "已准备 iOS 登录，请返回游戏核对角色"
-        tone == StatusTone.Success -> "游戏 SDK 已确认请求，待核对角色"
-        tone == StatusTone.Warning && (message.contains("SDK") || message.contains("回调") || message.contains("已发送")) ->
-            "SDK 未确认，请进游戏核对角色"
+        message.startsWith("当前游戏安装版本待确认") -> "上次结果仅供参考"
+        state.submittedCurrent && tone == StatusTone.Success -> "游戏登录组件已接收，待核对角色"
+        state.unconfirmedCurrent &&
+            (message.startsWith("请求已发送") || message.startsWith("上次请求已发送") ||
+                message.startsWith("已提交 iOS 登录准备") || message.startsWith("兼容模式已提交 iOS 登录准备")) ->
+            "请求已发送，待游戏内核对"
         message.length > 42 -> "先登录游戏账号，再点击「检测并准备」"
         else -> message
     }

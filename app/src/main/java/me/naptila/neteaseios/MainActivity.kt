@@ -574,18 +574,9 @@ class MainActivity : ComponentActivity() {
                             } else {
                                 "缓存临时文件已写入，未单独验证游戏端可读取。"
                             }
-                            val action = if (useNonEmptyToken) {
-                                "兼容模式已提交 iOS 登录准备"
-                            } else {
-                                "已提交 iOS 登录准备"
-                            }
-                            val nextStep = if (useNonEmptyToken) {
-                                "请返回游戏重新登录并核对角色。若仍未进入 iOS 角色，可适当重试或联系开发者。"
-                            } else {
-                                "请返回游戏重新登录并核对角色。若仍进入安卓角色，可尝试「登录兼容性设置」。"
-                            }
+                            val modeNote = if (useNonEmptyToken) "本次使用兼容模式。" else ""
                             val status = when {
-                                confirmed -> "游戏 SDK 已返回成功码，但服务器最终角色仍需在游戏内核对。"
+                                confirmed -> "游戏登录组件已接收。"
                                 callbackReason == "manual_return" ->
                                     "在 SDK 返回结果前关闭了桥接页，无法确认游戏端是否接受。"
                                 callbackReason == "unrecognized_callback" ->
@@ -595,7 +586,8 @@ class MainActivity : ComponentActivity() {
                                 else ->
                                     "等待 30 秒未收到可确认的 SDK 回调，不能判断最终登录平台。"
                             }
-                            val text = "$action。$nextStep $localWrite$status"
+                            val outcome = if (confirmed) status else "请求已发送。$status"
+                            val text = "${outcome}请返回游戏重新登录并核对区服和角色。$modeNote$localWrite"
                             complete(
                                 result = if (confirmed) "submitted" else "unconfirmed",
                                 text = text,
@@ -751,19 +743,19 @@ class MainActivity : ComponentActivity() {
                         "unconfirmed" -> "已发送，待核对"
                         else -> "未完成"
                     }
-                    message = "上次准备结果：$last。当前安装版本待确认。"
+                    message = "当前游戏安装版本待确认。上次结果仅供参考（$last）。"
                     tone = StatusTone.Neutral
                 }
 
                 submittedCurrent -> {
                     message = history.diagnostic(pkg)
-                        ?: "上次 SDK 返回成功回调；仍需在游戏内核对实际区服和角色。"
+                        ?: "上次准备时，游戏登录组件已接收。请在游戏内核对区服和角色。"
                     tone = StatusTone.Success
                 }
 
                 unconfirmedCurrent -> {
                     message = history.diagnostic(pkg)
-                        ?: "已提交 iOS 登录准备。请回「$gameName」重新登录并核对角色；SDK 未确认游戏端是否接受。"
+                        ?: "上次请求已发送，待游戏内核对。请回「$gameName」核对区服和角色。"
                     tone = StatusTone.Neutral
                 }
 
