@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import org.json.JSONObject
 import java.io.IOException
 import java.net.InetAddress
@@ -328,6 +329,8 @@ class MpayBridgeSession(
                             val reason = input.optString("reason")
                             val message = when (reason) {
                                 "not_logged_in" -> "未读取到已登录的网易账号，请先在「${target.appLabel}」正常登录该账号后再试。"
+                                "helper_check_timeout" -> "游戏账号检查阶段通信超时。${backgroundRestrictionHint()}"
+                                "helper_prepare_timeout" -> "准备文件阶段通信超时，无法确认本次是否完成写入。${backgroundRestrictionHint()}"
                                 "no_callback" -> "没有收到游戏接口响应，请返回游戏关闭当前页面后重试。"
                                 "bridge_missing" -> "游戏网页桥未就绪，请先打开「${target.appLabel}」登录进入主页后再试。"
                                 "load_not_dispatched" -> "临时准备文件已写入，但游戏网页桥未能提交 SDK 加载请求。请确认游戏组件是否支持此方法。"
@@ -339,6 +342,8 @@ class MpayBridgeSession(
                             BridgeDiagnosticLog.record(
                                 appContext, target.spec.packageName,
                                 when (reason) {
+                                    "helper_check_timeout" -> BridgeLogEvent.HELPER_CHECK_TIMEOUT
+                                    "helper_prepare_timeout" -> BridgeLogEvent.HELPER_PREPARE_TIMEOUT
                                     "sdk_read_failed" -> BridgeLogEvent.SDK_READ_FAILED
                                     "sdk_invalid_session", "sdk_rejected" -> BridgeLogEvent.SDK_REJECTED
                                     "load_not_dispatched" -> BridgeLogEvent.LOAD_NOT_DISPATCHED
@@ -432,6 +437,20 @@ class MpayBridgeSession(
             listener.onSubmitted(capturedGameId, confirmed, seed.usedSaf, callbackReason)
         }
         return true
+    }
+
+    private fun backgroundRestrictionHint(): String {
+        // Power-save state is observable without collecting any user data.
+        // An HTTP timeout alone does not prove that Android froze the app.
+        val powerSave = runCatching {
+            (appContext.getSystemService(Context.POWER_SERVICE) as PowerManager).isPowerSaveMode
+        }.getOrDefault(false)
+        val state = if (powerSave) {
+            "检测到系统省电模式已开启。"
+        } else {
+            "系统可能限制了助手后台执行，或游戏网络桥暂时无响应。"
+        }
+        return "${state}请关闭省电模式，检查系统设置中的本助手「电池 / 后台运行」权限，必要时改为不限制后重试。"
     }
 
     private fun fail(message: String) {
@@ -533,6 +552,8 @@ internal enum class BridgeLogEvent(val label: String) {
     NO_ACCOUNT("未读取到已登录账号"),
     STORAGE_ERROR("目录授权或文件写入失败"),
     BRIDGE_NOT_READY("游戏网页桥未就绪"),
+    HELPER_CHECK_TIMEOUT("游戏账号检查期间助手通信超时（可能受后台限制）"),
+    HELPER_PREPARE_TIMEOUT("iOS 文件准备期间助手通信超时（可能受后台限制）"),
     REQUEST_FAILED("本次准备未完成")
 }
 
