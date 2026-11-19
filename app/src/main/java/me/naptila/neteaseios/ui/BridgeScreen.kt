@@ -64,6 +64,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -111,7 +114,10 @@ data class BridgeUiState(
     val unconfirmedCurrent: Boolean = false,
     val transportMode: SeedTransportMode = SeedTransportMode.STANDARD,
     val nonEmptyToken: Boolean = false,
-    val safAuthorized: Boolean = false
+    val safAuthorized: Boolean = false,
+    val gameReadyConfirmation: Boolean = false,
+    val overlayPermissionExplanation: Boolean = false,
+    val diagnosticEvents: List<String> = emptyList()
 ) {
     val effectiveGameId: String? get() = currentGame?.spec?.gameId ?: detectedGameId
     val gameDisplayName: String get() = currentGame?.spec?.displayName ?: "目标游戏"
@@ -124,13 +130,34 @@ fun BridgeScreen(
     onSelectInstalledGame: (InstalledGame) -> Unit,
     onRefreshApps: () -> Unit,
     onSelectTransportMode: (SeedTransportMode) -> Unit,
-    onToggleNonEmptyToken: (Boolean) -> Unit,
+    onApplyNonEmptyToken: (Boolean) -> Unit,
     onAuthorizeSafDirectory: () -> Unit,
-    onPrepareIosLogin: () -> Unit
+    onRevokeSafDirectory: () -> Unit,
+    onPrepareIosLogin: () -> Unit,
+    onGameReadyContinue: () -> Unit,
+    onGameReadyCancel: () -> Unit,
+    onOverlayPermissionRequest: () -> Unit,
+    onOverlayPermissionSkip: () -> Unit,
+    onRefreshDiagnosticLog: () -> Unit,
+    onClearDiagnosticLog: () -> Unit
 ) {
     val dark = isSystemInDarkTheme()
     val scheme = MaterialTheme.colorScheme
     var showAppPicker by remember { mutableStateOf(false) }
+    var showDiagnostics by remember { mutableStateOf(false) }
+    var showHelp by remember { mutableStateOf(false) }
+
+    if (showHelp) {
+        HelpDialog(
+            onDismiss = { showHelp = false },
+            onOpenDiagnostics = {
+                showHelp = false
+                showDiagnostics = true
+                onRefreshDiagnosticLog()
+            },
+            diagnosticsAvailable = state.currentGame != null
+        )
+    }
 
     if (showAppPicker) {
         LaunchedEffect(Unit) { onRefreshApps() }
@@ -145,6 +172,41 @@ fun BridgeScreen(
             onSelectApp = { app ->
                 onSelectInstalledGame(app)
                 showAppPicker = false
+            }
+        )
+    }
+
+    if (state.overlayPermissionExplanation) {
+        AlertDialog(
+            onDismissRequest = onOverlayPermissionSkip,
+            title = { Text("游戏内确认浮窗") },
+            text = {
+                Text("首次使用需授权「显示在其他应用上层」，才能在游戏界面显示小窗口。也可跳过，返回助手确认。")
+            },
+            confirmButton = {
+                Button(onClick = onOverlayPermissionRequest) { Text("前往授权") }
+            },
+            dismissButton = {
+                TextButton(onClick = onOverlayPermissionSkip) { Text("暂不授权") }
+            }
+        )
+    }
+
+    // The game's own "欢迎进入游戏" banner belongs to another process. We cannot
+    // observe it without intrusive accessibility/screen-capture permission.
+    // User confirmation is only a handoff; the native account preflight remains mandatory.
+    if (state.gameReadyConfirmation) {
+        AlertDialog(
+            onDismissRequest = onGameReadyCancel,
+            title = { Text("确认游戏登录状态") },
+            text = {
+                Text("已看到「欢迎进入游戏」提示，或已登录游戏账号？点击「确定」后将切回游戏并自动打开桥接页，请稍候。")
+            },
+            confirmButton = {
+                Button(onClick = onGameReadyContinue) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = onGameReadyCancel) { Text("暂不准备") }
             }
         )
     }
@@ -173,13 +235,13 @@ fun BridgeScreen(
                     state = state,
                     dark = dark,
                     onShowPicker = { showAppPicker = true },
-                    onOpenGame = onOpenGame
+                    onOpenHelp = { showHelp = true },
+                    onOpenGame = onOpenGame,
+                    onRevokeSafDirectory = onRevokeSafDirectory
                 )
 
                 StatusFeedbackBanner(
-                    busy = state.busy,
-                    message = state.statusMessage,
-                    tone = state.statusTone,
+                    state = state,
                     dark = dark
                 )
 
@@ -187,14 +249,23 @@ fun BridgeScreen(
                     state = state,
                     dark = dark,
                     onSelectTransportMode = onSelectTransportMode,
-                    onToggleNonEmptyToken = onToggleNonEmptyToken,
-                    onAuthorizeSafDirectory = {
-                        if (state.currentGame == null) showAppPicker = true else onAuthorizeSafDirectory()
-                    },
-                    onPrepareIosLogin = {
-                        if (state.currentGame == null) showAppPicker = true else onPrepareIosLogin()
-                    }
+                    onAuthorizeSafDirectory = onAuthorizeSafDirectory,
+                    onPrepareIosLogin = onPrepareIosLogin
                 )
+                LoginCompatibilityCard(
+                    state = state,
+                    onApplyNonEmptyToken = onApplyNonEmptyToken
+                )
+                if (showDiagnostics) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { showDiagnostics = false }) { Text("收起诊断") }
+                    }
+                    DiagnosticLogCard(
+                        state = state,
+                        onRefresh = onRefreshDiagnosticLog,
+                        onClear = onClearDiagnosticLog
+                    )
+                }
             }
         }
     }
@@ -231,16 +302,39 @@ private fun HeroHeaderCard(
     state: BridgeUiState,
     dark: Boolean,
     onShowPicker: () -> Unit,
-    onOpenGame: () -> Unit
+    onOpenHelp: () -> Unit,
+    onOpenGame: () -> Unit,
+    onRevokeSafDirectory: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
-    val uriHandler = LocalUriHandler.current
     val gradientColors = if (dark) {
         listOf(Color(0xFF182949), Color(0xFF131F36))
     } else {
         listOf(Color(0xFFFFFFFF), Color(0xFFF5F8FF))
     }
     val selected = state.currentGame
+    var showRevokeConfirm by remember(selected?.spec?.packageName) { mutableStateOf(false) }
+    if (showRevokeConfirm && state.safAuthorized && state.transportMode == SeedTransportMode.SAF_MEDIA) {
+        AlertDialog(
+            onDismissRequest = { showRevokeConfirm = false },
+            title = { Text("取消目录授权？") },
+            text = {
+                Text("取消「${state.gameDisplayName}」的目录授权后，需要重新授权才能使用共享目录准备。不会删除游戏文件。")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showRevokeConfirm = false
+                        onRevokeSafDirectory()
+                    },
+                    enabled = !state.busy
+                ) { Text("取消授权") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRevokeConfirm = false }) { Text("保留授权") }
+            }
+        )
+    }
 
     Card(
         shape = RoundedCornerShape(24.dp),
@@ -253,8 +347,8 @@ private fun HeroHeaderCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(Brush.linearGradient(gradientColors))
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -278,7 +372,7 @@ private fun HeroHeaderCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "网易游戏 iOS 登录",
-                        style = MaterialTheme.typography.headlineSmall,
+                        style = MaterialTheme.typography.titleLarge,
                         color = scheme.onSurface
                     )
                     Text(
@@ -287,33 +381,17 @@ private fun HeroHeaderCard(
                         color = scheme.onSurfaceVariant
                     )
                 }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                HeaderLinkChip(
-                    icon = AppIcons.GitHub,
-                    label = "GitHub",
-                    accentColor = scheme.primary,
-                    dark = dark,
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        runCatching { uriHandler.openUri("https://github.com/Naptila/netease-ios") }
-                    }
-                )
-                HeaderLinkChip(
-                    icon = AppIcons.Bilibili,
-                    label = "BiliBili",
-                    accentColor = if (dark) Color(0xFFFF85AD) else Color(0xFFE0487B),
-                    dark = dark,
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        runCatching { uriHandler.openUri("https://space.bilibili.com/330170655") }
-                    }
-                )
+                IconButton(
+                    onClick = onOpenHelp,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = AppIcons.Info,
+                        contentDescription = "使用说明",
+                        tint = scheme.primary,
+                        modifier = Modifier.size(25.dp)
+                    )
+                }
             }
 
             Surface(
@@ -443,20 +521,22 @@ private fun HeroHeaderCard(
                         modifier = Modifier.weight(1f)
                     )
 
-                    val (modeLabel, modeTone) = when {
-                        state.submittedCurrent -> "上次已确认" to StatusTone.Success
-                        state.unconfirmedCurrent -> "已发送 · 待核对" to StatusTone.Warning
-                        state.transportMode == SeedTransportMode.SAF_MEDIA -> {
+                    val (modeLabel, modeTone) =
+                        if (state.transportMode == SeedTransportMode.SAF_MEDIA) {
                             if (state.safAuthorized) "目录已授权" to StatusTone.Success
                             else "目录待授权" to StatusTone.Warning
+                        } else {
+                            "标准缓存" to StatusTone.Neutral
                         }
-                        else -> "标准缓存" to StatusTone.Neutral
-                    }
                     StatusPill(
                         text = modeLabel,
                         tone = modeTone,
                         dark = dark,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        onClick = if (state.transportMode == SeedTransportMode.SAF_MEDIA && state.safAuthorized) {
+                            { showRevokeConfirm = true }
+                        } else null,
+                        enabled = !state.busy && selected.installed
                     )
 
                     FilledTonalButton(
@@ -580,12 +660,12 @@ private fun InstalledAppPickerDialog(
                 ) {
                     Column {
                         Text(
-                            text = "选择已安装的应用",
+                            text = "选择网易游戏",
                             style = MaterialTheme.typography.titleMedium,
                             color = scheme.onSurface
                         )
                         Text(
-                            text = "选择要登录 iOS 角色的网易游戏",
+                            text = "仅显示本机已安装的 com.netease.* 应用",
                             style = MaterialTheme.typography.bodySmall,
                             color = scheme.onSurfaceVariant
                         )
@@ -630,7 +710,7 @@ private fun InstalledAppPickerDialog(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            text = if (loading) "正在读取本机已安装应用…" else "没有找到匹配的应用。",
+                            text = if (loading) "正在读取网易游戏…" else "没有找到匹配的网易游戏。",
                             style = MaterialTheme.typography.bodySmall,
                             color = scheme.onSurfaceVariant,
                             modifier = Modifier.padding(16.dp)
@@ -712,7 +792,7 @@ private fun InstalledAppRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 if (confirmed) {
-                    Text("上次准备已确认", style = MaterialTheme.typography.labelSmall, color = scheme.primary)
+                    Text("上次登录组件已接收", style = MaterialTheme.typography.labelSmall, color = scheme.primary)
                 }
                 Text(
                     text = item.spec.packageName,
@@ -732,7 +812,9 @@ private fun StatusPill(
     text: String,
     tone: StatusTone,
     dark: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    enabled: Boolean = true
 ) {
     val scheme = MaterialTheme.colorScheme
     val (bg, fg) = when (tone) {
@@ -745,7 +827,13 @@ private fun StatusPill(
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = bg,
-        modifier = modifier
+        modifier = modifier.then(
+            if (onClick != null) {
+                Modifier.clip(RoundedCornerShape(12.dp)).clickable(enabled = enabled, onClick = onClick)
+            } else {
+                Modifier
+            }
+        )
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
@@ -771,11 +859,12 @@ private fun StatusPill(
 
 @Composable
 private fun StatusFeedbackBanner(
-    busy: Boolean,
-    message: String,
-    tone: StatusTone,
+    state: BridgeUiState,
     dark: Boolean
 ) {
+    val busy = state.busy
+    val message = state.statusMessage
+    val tone = state.statusTone
     val scheme = MaterialTheme.colorScheme
     val targetBg = when {
         busy -> scheme.primaryContainer
@@ -790,6 +879,45 @@ private fun StatusFeedbackBanner(
         tone == StatusTone.Warning -> if (dark) StatusWarningDark else StatusWarningLight
         tone == StatusTone.Error -> if (dark) StatusErrorDark else StatusErrorLight
         else -> scheme.onSurfaceVariant
+    }
+
+    // Keep the home banner brief. Full failure details remain available on demand.
+    val summary = when {
+        busy -> "正在检测游戏账号并准备…"
+        tone == StatusTone.Error -> when {
+            message.contains("通信超时") -> "助手通信超时，请查看详情"
+            message.contains("游戏网页桥未就绪") -> "游戏网页桥未就绪，未完成准备"
+            message.contains("没有收到游戏接口响应") -> "游戏账号接口未响应，未完成准备"
+            message.contains("未读取到已登录") || message.contains("未检测到游戏登录账号") ->
+                "未检测到登录账号，准备未开始"
+            message.contains("无法拉起") -> "无法启动游戏桥接页面"
+            message.contains("SDK 未能读取") -> "SDK 无法读取准备文件"
+            message.contains("SDK 已读取文件") || message.contains("SDK 拒绝") ->
+                "游戏 SDK 未接受准备数据"
+            message.contains("网页桥未能提交") -> "文件已写入，但 SDK 请求未提交"
+            message.contains("目录授权") || message.contains("写入失败") -> "文件准备失败，请查看原因"
+            message.contains("未能完成 iOS 登录准备") -> "游戏桥接超时，请查看原因"
+            else -> "准备未完成，请查看原因"
+        }
+        message.startsWith("当前游戏安装版本待确认") -> "上次结果仅供参考"
+        state.submittedCurrent && tone == StatusTone.Success -> "游戏登录组件已接收，待核对角色"
+        state.unconfirmedCurrent &&
+            (message.startsWith("请求已发送") || message.startsWith("上次请求已发送") ||
+                message.startsWith("已提交 iOS 登录准备") || message.startsWith("兼容模式已提交 iOS 登录准备")) ->
+            "请求已发送，待游戏内核对"
+        message.length > 42 -> "先登录游戏账号，再点击「检测并准备」"
+        else -> message
+    }
+    var showDetails by remember { mutableStateOf(false) }
+    if (showDetails && message != summary) {
+        AlertDialog(
+            onDismissRequest = { showDetails = false },
+            title = { Text("操作详情") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { showDetails = false }) { Text("知道了") }
+            }
+        )
     }
 
     val containerColor by animateColorAsState(targetBg, tween(250), label = "statusBg")
@@ -827,7 +955,7 @@ private fun StatusFeedbackBanner(
             }
 
             AnimatedContent(
-                targetState = message,
+                targetState = summary,
                 transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
                 label = "statusText",
                 modifier = Modifier.weight(1f)
@@ -839,6 +967,12 @@ private fun StatusFeedbackBanner(
                     color = contentColor
                 )
             }
+            if (!busy && message != summary) {
+                TextButton(
+                    onClick = { showDetails = true },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                ) { Text("详情", style = MaterialTheme.typography.labelSmall) }
+            }
         }
     }
 }
@@ -848,15 +982,11 @@ private fun PrepareIosCard(
     state: BridgeUiState,
     dark: Boolean,
     onSelectTransportMode: (SeedTransportMode) -> Unit,
-    onToggleNonEmptyToken: (Boolean) -> Unit,
     onAuthorizeSafDirectory: () -> Unit,
     onPrepareIosLogin: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
     val hasGame = state.currentGame != null
-    val warnBg = if (dark) StatusWarningContainerDark else StatusWarningContainerLight
-    val warnFg = if (dark) StatusWarningDark else StatusWarningLight
-
     val borderColor by animateColorAsState(
         targetValue = when {
             state.submittedCurrent -> (if (dark) StatusSuccessDark else StatusSuccessLight).copy(alpha = 0.45f)
@@ -880,18 +1010,11 @@ private fun PrepareIosCard(
                 .padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = "准备 iOS 登录",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = scheme.onSurface
-                )
-                Text(
-                    text = "先在游戏主页登好账号 → 点下方准备 → 回游戏「切换账号」重登",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant
-                )
-            }
+            Text(
+                text = "准备 iOS 登录",
+                style = MaterialTheme.typography.titleMedium,
+                color = scheme.onSurface
+            )
 
             var showOptions by remember(state.currentGame?.spec?.packageName) { mutableStateOf(false) }
             val modeName = if (state.transportMode == SeedTransportMode.STANDARD) "标准缓存" else "共享目录"
@@ -904,7 +1027,7 @@ private fun PrepareIosCard(
             if (showOptions) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     TransportModeOptionItem(
-                        title = "标准缓存（默认）",
+                        title = "标准缓存（其他网易游戏默认）",
                         description = "适用于光·遇等大多数官服游戏",
                         selected = state.transportMode == SeedTransportMode.STANDARD,
                         enabled = !state.busy,
@@ -912,94 +1035,48 @@ private fun PrepareIosCard(
                     )
 
                     TransportModeOptionItem(
-                        title = "共享目录（SAF · 阴阳师适用）",
+                        title = "共享目录（阴阳师默认）",
                         description = "授权 Android/media 写入，适配无缓存接口游戏",
                         selected = state.transportMode == SeedTransportMode.SAF_MEDIA,
                         enabled = !state.busy,
                         onClick = { onSelectTransportMode(SeedTransportMode.SAF_MEDIA) }
                     )
 
-                    if (state.transportMode == SeedTransportMode.SAF_MEDIA) {
-                        val authToneFg = if (state.safAuthorized) {
-                            if (dark) StatusSuccessDark else StatusSuccessLight
-                        } else {
-                            scheme.onSurfaceVariant
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(13.dp),
-                            color = scheme.surfaceVariant.copy(alpha = if (dark) 0.5f else 0.65f),
-                            border = BorderStroke(1.dp, scheme.outlineVariant),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = AppIcons.Folder,
-                                    contentDescription = null,
-                                    tint = authToneFg,
-                                    modifier = Modifier.size(17.dp)
-                                )
-                                Text(
-                                    text = if (state.safAuthorized) "已授权 Android/media" else "待授权 Android/media",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = authToneFg,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                TextButton(
-                                    onClick = onAuthorizeSafDirectory,
-                                    enabled = !state.busy,
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-                                ) {
-                                    Text(
-                                        text = if (state.safAuthorized) "更换" else "授权",
-                                        style = MaterialTheme.typography.labelMedium
-                                    )
-                                }
-                            }
-                        }
-                    }
+                }
+            }
 
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (state.nonEmptyToken) scheme.primaryContainer.copy(alpha = 0.55f)
-                        else scheme.surfaceVariant.copy(alpha = 0.38f),
-                        border = BorderStroke(
-                            width = if (state.nonEmptyToken) 1.4.dp else 1.dp,
-                            color = if (state.nonEmptyToken) scheme.primary else scheme.outlineVariant
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .clickable(enabled = !state.busy) { onToggleNonEmptyToken(!state.nonEmptyToken) }
+            // Once the game has a valid saved grant, keep the preparation card compact.
+            // Revoke via the header's "目录已授权" chip to show this prompt again.
+            if (hasGame && state.transportMode == SeedTransportMode.SAF_MEDIA && !state.safAuthorized) {
+                Surface(
+                    shape = RoundedCornerShape(13.dp),
+                    color = scheme.surfaceVariant.copy(alpha = if (dark) 0.5f else 0.65f),
+                    border = BorderStroke(1.dp, scheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        Icon(
+                            imageVector = AppIcons.Folder,
+                            contentDescription = null,
+                            tint = scheme.onSurfaceVariant,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Text(
+                            text = "待授权 Android/media",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(
+                            onClick = onAuthorizeSafDirectory,
+                            enabled = !state.busy,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
                         ) {
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(1.dp)
-                            ) {
-                                Text(
-                                    text = "非空占位凭证（新版阴阳师适用）",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = scheme.onSurface
-                                )
-                                Text(
-                                    text = "默认关闭；仅在准备后重登仍是安卓号时开启",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = scheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = state.nonEmptyToken,
-                                onCheckedChange = null,
-                                enabled = !state.busy
-                            )
+                            Text("授权", style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
@@ -1007,7 +1084,8 @@ private fun PrepareIosCard(
 
             Button(
                 onClick = onPrepareIosLogin,
-                enabled = !state.busy && (state.currentGame?.installed != false),
+                enabled = !state.busy && state.currentGame?.installed == true &&
+                    (state.transportMode != SeedTransportMode.SAF_MEDIA || state.safAuthorized),
                 shape = RoundedCornerShape(15.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = scheme.primary),
                 contentPadding = PaddingValues(vertical = 15.dp, horizontal = 20.dp),
@@ -1020,52 +1098,229 @@ private fun PrepareIosCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = if (hasGame) "一键准备 iOS 登录" else "先选择目标游戏",
+                    text = "检测并准备 iOS 登录",
                     style = MaterialTheme.typography.labelLarge
                 )
             }
 
-            Surface(
-                shape = RoundedCornerShape(13.dp),
-                color = warnBg,
-                border = BorderStroke(1.dp, warnFg.copy(alpha = 0.4f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(9.dp),
-                    verticalAlignment = Alignment.Top
-                ) {
-                    Icon(
-                        imageVector = AppIcons.Alert,
-                        contentDescription = null,
-                        tint = warnFg,
-                        modifier = Modifier
-                            .padding(top = 2.dp)
-                            .size(17.dp)
-                    )
-                    Text(
-                        text = "若准备前已点开登录弹窗，回游戏必须先点右上角「×」关闭再重开，直接点旧列表会一直转圈。",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Medium,
-                        color = warnFg
-                    )
-                }
-            }
+            // Restoring Android roles is unrelated to the iOS compatibility retry;
+            // avoid presenting a misleading account-removal action inside this card.
+        }
+    }
+}
 
-            if (!state.busy && state.submittedCurrent) {
-                var showGuide by remember(state.currentGame?.spec?.packageName) { mutableStateOf(false) }
-                TextButton(onClick = { showGuide = true }) { Text("如何切回安卓角色") }
-                if (showGuide) {
-                    AlertDialog(
-                        onDismissRequest = { showGuide = false },
-                        title = { Text("如何切回安卓角色") },
-                        text = { Text("先确认你能用原账号重新登录。回到「${state.gameDisplayName}」，在「切换账号」列表移除本机保存的这条登录记录，再用同一账号登录。进入游戏后核对区服和角色。") },
-                        confirmButton = { TextButton(onClick = { showGuide = false }) { Text("知道了") } }
-                    )
-                }
+/**
+ * Non-empty placeholder tokens are opt-in and have no effect on previously imported sessions.
+ * Keep the switch local to this dialog until the user explicitly confirms re-preparation.
+ */
+@Composable
+private fun LoginCompatibilityCard(
+    state: BridgeUiState,
+    onApplyNonEmptyToken: (Boolean) -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    val target = state.currentGame
+    val enabled = target?.installed == true && !state.busy
+    var showSettings by remember { mutableStateOf(false) }
+    var pendingNonEmptyToken by remember(target?.spec?.packageName, showSettings) {
+        mutableStateOf(state.nonEmptyToken)
+    }
+    val hasPendingChange = pendingNonEmptyToken != state.nonEmptyToken
+
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = scheme.surface),
+        border = BorderStroke(1.dp, scheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                imageVector = AppIcons.SwitchAccount,
+                contentDescription = null,
+                tint = scheme.primary,
+                modifier = Modifier.size(24.dp)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text("登录兼容性设置", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    if (state.nonEmptyToken) "非空占位：开" else "非空占位：关",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+            FilledTonalButton(
+                onClick = { showSettings = true },
+                enabled = enabled
+            ) {
+                Text("设置")
             }
         }
+    }
+
+    if (showSettings) {
+        AlertDialog(
+            onDismissRequest = { showSettings = false },
+            title = { Text("登录兼容性设置") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text(
+                        "默认准备后仍进入安卓角色，可尝试开启兼容重试。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = scheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            "非空占位凭证",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = pendingNonEmptyToken,
+                            onCheckedChange = { pendingNonEmptyToken = it },
+                            enabled = enabled
+                        )
+                    }
+                    Text(
+                        "确认更改后重新执行 iOS 准备；不保证游戏接受。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showSettings = false
+                        if (hasPendingChange) onApplyNonEmptyToken(pendingNonEmptyToken)
+                    },
+                    enabled = enabled
+                ) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSettings = false }) { Text("取消") }
+            }
+        )
+    }
+}
+
+/**
+ * Locally stored, limited non-secret diagnostic events.
+ * Displaying the log never invokes the game's login SDK.
+ */
+@Composable
+private fun DiagnosticLogCard(
+    state: BridgeUiState,
+    onRefresh: () -> Unit,
+    onClear: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    val clipboard = LocalClipboardManager.current
+    var showLog by remember(state.currentGame?.spec?.packageName) { mutableStateOf(false) }
+
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = scheme.surface),
+        border = BorderStroke(1.dp, scheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                imageVector = AppIcons.Info,
+                contentDescription = null,
+                tint = scheme.primary,
+                modifier = Modifier.size(24.dp)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text("诊断日志", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "检查目录写入、SDK 调用和回调结果",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+            FilledTonalButton(
+                onClick = { onRefresh(); showLog = true },
+                enabled = state.currentGame != null
+            ) {
+                Text("查看")
+            }
+        }
+    }
+
+    if (showLog) {
+        AlertDialog(
+            onDismissRequest = { showLog = false },
+            title = { Text("诊断日志 · ${state.gameDisplayName}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "仅保存最近 60 条操作阶段，不含账号、UID、密码、token 和原始 SDK 回调。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant
+                    )
+                    Surface(
+                        color = scheme.surfaceVariant.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        SelectionContainer {
+                            Column(
+                                modifier = Modifier
+                                    .heightIn(max = 330.dp)
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(7.dp)
+                            ) {
+                                if (state.diagnosticEvents.isEmpty()) {
+                                    Text("暂无日志。执行一次登录准备后再查看。", style = MaterialTheme.typography.bodySmall)
+                                } else {
+                                    state.diagnosticEvents.forEach { entry ->
+                                        Text(
+                                            text = entry,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = scheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    TextButton(
+                        onClick = onClear,
+                        enabled = state.diagnosticEvents.isNotEmpty()
+                    ) {
+                        Text("清空本游戏日志")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        clipboard.setText(
+                            AnnotatedString(state.diagnosticEvents.joinToString("\n"))
+                        )
+                    },
+                    enabled = state.diagnosticEvents.isNotEmpty()
+                ) {
+                    Text("复制日志")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLog = false }) { Text("关闭") }
+            }
+        )
     }
 }
 
@@ -1217,9 +1472,16 @@ private fun BridgeScreenPreview() {
             onSelectInstalledGame = {},
             onRefreshApps = {},
             onSelectTransportMode = {},
-            onToggleNonEmptyToken = {},
+            onApplyNonEmptyToken = {},
             onAuthorizeSafDirectory = {},
-            onPrepareIosLogin = {}
+            onRevokeSafDirectory = {},
+            onPrepareIosLogin = {},
+            onGameReadyContinue = {},
+            onGameReadyCancel = {},
+            onOverlayPermissionRequest = {},
+            onOverlayPermissionSkip = {},
+            onRefreshDiagnosticLog = {},
+            onClearDiagnosticLog = {}
         )
     }
 }

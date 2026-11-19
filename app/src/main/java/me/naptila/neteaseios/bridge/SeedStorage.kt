@@ -38,7 +38,13 @@ internal object SeedStorage {
 
     fun getTransportMode(context: Context, packageName: String): SeedTransportMode {
         val raw = MpayBridgeSession.prefs(context).getString("seed_mode_$packageName", null)
-        return SeedTransportMode.fromPref(raw)
+        // Apply the game's recommended default only when there is no explicit user choice.
+        // A user-selected transport remains sticky per game.
+        return if (raw == null && packageName == "com.netease.onmyoji") {
+            SeedTransportMode.SAF_MEDIA
+        } else {
+            SeedTransportMode.fromPref(raw)
+        }
     }
 
     fun setTransportMode(context: Context, packageName: String, mode: SeedTransportMode) {
@@ -145,6 +151,42 @@ internal object SeedStorage {
             .apply()
     }
 
+    /**
+     * Detach a single game's SAF directory. Android grants belong to this helper app,
+     * so release the underlying persisted permission only if no other game still
+     * refers to the same tree. Never delete or enumerate any game files.
+     */
+    fun revokeDirectoryGrant(context: Context, packageName: String) {
+        require(BridgeProtocol.isValidPackageName(packageName))
+        val prefs = MpayBridgeSession.prefs(context)
+        val key = "media_tree_$packageName"
+        val stored = prefs.getString(key, null) ?: return
+        val otherGameUsesSameTree = prefs.all.any { (otherKey, value) ->
+            otherKey != key && otherKey.startsWith("media_tree_") && value == stored
+        }
+        if (!otherGameUsesSameTree) {
+            val uri = runCatching { Uri.parse(stored) }.getOrNull()
+            if (uri != null) {
+                val persisted = context.contentResolver.persistedUriPermissions.any {
+                    it.uri == uri
+                }
+                if (persisted) {
+                    try {
+                        context.contentResolver.releasePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        )
+                    } catch (_: SecurityException) {
+                        throw SeedStorageException("无法撤销系统目录权限，请稍后重试。")
+                    }
+                }
+            }
+        }
+        // Remove this game's association even when a shared tree must stay granted
+        // for another selected NetEase game.
+        prefs.edit().remove(key).apply()
+    }
+
     fun write(
         context: Context,
         target: GameTarget,
@@ -238,9 +280,13 @@ internal object SeedStorage {
         remember(context, file, add = true)
         try {
             writeBytes(context, file, bytes)
+            // Persisted SAF permission alone proves neither write nor read visibility.
+            // Check the bytes through the same document URI before asking MPay to load them.
+            verifyReadBack(context, file, bytes)
         } catch (e: Exception) {
             delete(context, file.toString())
-            throw e
+            if (e is SeedStorageException) throw e
+            throw SeedStorageException("共享目录临时文件写入或读回校验失败，请检查目录授权和存储状态。")
         }
 
         val primaryRoot = resolvePrimaryStorageRoot(context)
@@ -276,6 +322,22 @@ internal object SeedStorage {
             if (out == null) throw IOException("stream-unavailable")
             out.write(bytes)
             out.flush()
+        }
+    }
+
+    /** Verifies only this helper's transient seed, without logging or persisting its contents. */
+    private fun verifyReadBack(context: Context, uri: Uri, expected: ByteArray) {
+        val input = context.contentResolver.openInputStream(uri)
+            ?: throw SeedStorageException("已创建临时文件，但无法读回；SDK 可能也无法读取。")
+        input.use { stream ->
+            for (byte in expected) {
+                if (stream.read() != (byte.toInt() and 0xff)) {
+                    throw SeedStorageException("临时文件读回内容不一致，已取消 SDK 加载请求。")
+                }
+            }
+            if (stream.read() != -1) {
+                throw SeedStorageException("临时文件读回长度不一致，已取消 SDK 加载请求。")
+            }
         }
     }
 
