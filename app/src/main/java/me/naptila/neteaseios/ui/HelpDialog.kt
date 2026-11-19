@@ -101,6 +101,10 @@ internal fun HelpDialog(
                         title = "如何更换授权目录？",
                         answer = "在助手首页点击游戏下方的「目录已授权」，确认「取消授权」后，准备区域会重新显示目录授权入口。点击「授权」，选择需要使用的目录并确认即可。"
                     )
+                    HelpFaq(
+                        title = "游戏桥接通信超时怎么办？",
+                        answer = "请先返回游戏保持登录状态，检查是否开启省电模式。若反复出现通信超时，可在系统「应用信息 → 电池」中检查助手的后台限制，必要时设为「不限制」后重试。不同手机设置名称可能不同。"
+                    )
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = scheme.surfaceVariant.copy(alpha = 0.6f)
