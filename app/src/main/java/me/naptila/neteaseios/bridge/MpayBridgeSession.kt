@@ -33,6 +33,7 @@ class MpayBridgeSession(
     private val target: GameTarget,
     private val transportMode: SeedTransportMode = SeedTransportMode.STANDARD,
     private val nonEmptyToken: Boolean = false,
+    private val rememberAccount: Boolean = false,
     private val listener: Listener
 ) : AutoCloseable {
 
@@ -386,19 +387,22 @@ class MpayBridgeSession(
         preparedSeed?.let { return it }
 
         val fileName = "ntes_mpay_${UUID.randomUUID().toString().replace("-", "")}.tmp"
+        // Newer MPay account switchers may hide records carrying is_remember
+        // when web_token_persist is disabled. Match upstream v1.3.3:
+        // omit this field by default; opt in per game for older MPay SDKs.
+        val pcExtInfo = JSONObject()
+            .put("src_client_type", BridgeProtocol.IOS_CLIENT_TYPE)
+            .put("is_from_ticket_login", true)
+        if (rememberAccount) {
+            pcExtInfo.put("is_remember", true)
+        }
         val user = JSONObject()
             .put("id", uid)
             .put("token", if (nonEmptyToken) "0" else "")
             .put("need_mask", true)
             .put("login_type", BridgeProtocol.DEFAULT_LOGIN_TYPE)
             .put("login_channel", BridgeProtocol.DEFAULT_LOGIN_CHANNEL)
-            .put(
-                "pc_ext_info",
-                JSONObject()
-                    .put("src_client_type", BridgeProtocol.IOS_CLIENT_TYPE)
-                    .put("is_remember", true)
-                    .put("is_from_ticket_login", true)
-            )
+            .put("pc_ext_info", pcExtInfo)
         val bytes = (JSONObject().put("user", user).toString() + "\n")
             .toByteArray(StandardCharsets.UTF_8)
 
@@ -522,6 +526,8 @@ internal enum class BridgeLogEvent(val label: String) {
     TRANSPORT_CACHE("准备方式：标准缓存"),
     PLACEHOLDER_ON("兼容设置：非空占位已开启"),
     PLACEHOLDER_OFF("兼容设置：非空占位已关闭"),
+    LEGACY_REMEMBER_ON("旧版组件记住标记：开启（is_remember=true）"),
+    LEGACY_REMEMBER_OFF("旧版组件记住标记：关闭（省略 is_remember）"),
     OVERLAY_CONFIRMED("在游戏悬浮窗点击确定（游戏通常仍在前台）"),
     ASSISTANT_CONFIRMED("返回助手弹窗点击确定（游戏可能进入后台）"),
     GAME_REOPENED_BEFORE_BRIDGE("无浮窗确认后重新切回游戏，再执行桥接"),

@@ -155,7 +155,7 @@ class MainActivity : ComponentActivity() {
                     onSelectInstalledGame = ::selectInstalledGame,
                     onRefreshApps = ::loadInstalledAppsAsync,
                     onSelectTransportMode = ::selectTransportMode,
-                    onApplyNonEmptyToken = ::applyNonEmptyTokenAndPrepare,
+                    onApplyCompatibility = ::applyCompatibilityAndPrepare,
                     onAuthorizeSafDirectory = ::authorizeCurrentGameDirectory,
                     onRevokeSafDirectory = ::revokeCurrentGameDirectory,
                     onPrepareIosLogin = ::requestPrepareIosLogin,
@@ -293,11 +293,11 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * The compatibility preference is committed only on explicit confirmation.
-     * Re-run the bridge after saving: prior game login sessions cannot be retroactively changed.
-     * SAF grants are still checked by the existing beginPrepare flow.
+     * Apply both independent compatibility preferences on explicit confirmation.
+     * Only newly generated seed files can use the new settings; never mutate
+     * or delete MPay's existing account-switcher records.
      */
-    private fun applyNonEmptyTokenAndPrepare(enabled: Boolean) {
+    private fun applyCompatibilityAndPrepare(nonEmptyToken: Boolean, rememberAccount: Boolean) {
         if (uiState.busy) return
         val game = uiState.currentGame ?: run {
             showMessage("请先选择目标网易游戏。", StatusTone.Warning)
@@ -307,10 +307,16 @@ class MainActivity : ComponentActivity() {
             showMessage("目标游戏未安装，无法应用兼容性设置。", StatusTone.Warning)
             return
         }
-        // Avoid opening the game or rewriting a preference when nothing changed.
-        if (uiState.nonEmptyToken == enabled) return
-        SeedStorage.setNonEmptyTokenEnabled(this, game.spec.packageName, enabled)
-        uiState = uiState.copy(nonEmptyToken = enabled)
+        if (uiState.nonEmptyToken == nonEmptyToken &&
+            uiState.rememberAccount == rememberAccount) return
+
+        val pkg = game.spec.packageName
+        SeedStorage.setNonEmptyTokenEnabled(this, pkg, nonEmptyToken)
+        SeedStorage.setRememberAccountEnabled(this, pkg, rememberAccount)
+        uiState = uiState.copy(
+            nonEmptyToken = nonEmptyToken,
+            rememberAccount = rememberAccount
+        )
         requestPrepareIosLogin()
     }
 
@@ -541,11 +547,17 @@ class MainActivity : ComponentActivity() {
             this, spec.packageName,
             if (uiState.nonEmptyToken) BridgeLogEvent.PLACEHOLDER_ON else BridgeLogEvent.PLACEHOLDER_OFF
         )
+        BridgeDiagnosticLog.record(
+            this, spec.packageName,
+            if (uiState.rememberAccount) BridgeLogEvent.LEGACY_REMEMBER_ON
+            else BridgeLogEvent.LEGACY_REMEMBER_OFF
+        )
         val attempt = UUID.randomUUID().toString()
         activeAttempt = attempt
         history.begin(game, attempt)
         val selectedMode = uiState.transportMode
         val useNonEmptyToken = uiState.nonEmptyToken
+        val useRememberAccount = uiState.rememberAccount
         uiState = uiState.copy(
             busy = true,
             submittedCurrent = false,
@@ -566,6 +578,7 @@ class MainActivity : ComponentActivity() {
                     target = target,
                     transportMode = selectedMode,
                     nonEmptyToken = useNonEmptyToken,
+                    rememberAccount = useRememberAccount,
                     listener = object : MpayBridgeSession.Listener {
                         override fun onSubmitted(gameId: String, confirmed: Boolean, usedSaf: Boolean, callbackReason: String) {
                             if (!ownsAttempt(attempt)) return
@@ -707,6 +720,8 @@ class MainActivity : ComponentActivity() {
                 detectedGameId = null,
                 submittedCurrent = false,
                 unconfirmedCurrent = false,
+                nonEmptyToken = false,
+                rememberAccount = false,
                 safAuthorized = false,
                 diagnosticEvents = emptyList(),
                 statusMessage = if (updateStatusMessage && !uiState.busy) "请先选择目标网易游戏。" else uiState.statusMessage,
@@ -725,6 +740,7 @@ class MainActivity : ComponentActivity() {
         val unconfirmedCurrent = sameBuild && state == "unconfirmed"
         val mode = SeedStorage.getTransportMode(this, pkg)
         val nonEmptyToken = SeedStorage.isNonEmptyTokenEnabled(this, pkg)
+        val rememberAccount = SeedStorage.isRememberAccountEnabled(this, pkg)
         val safAuthorized = SeedStorage.hasValidDirectoryGrant(this, pkg)
 
         var message = uiState.statusMessage
@@ -783,6 +799,7 @@ class MainActivity : ComponentActivity() {
             unconfirmedCurrent = unconfirmedCurrent,
             transportMode = mode,
             nonEmptyToken = nonEmptyToken,
+            rememberAccount = rememberAccount,
             safAuthorized = safAuthorized,
             diagnosticEvents = BridgeDiagnosticLog.entries(this, pkg),
             statusMessage = message,
