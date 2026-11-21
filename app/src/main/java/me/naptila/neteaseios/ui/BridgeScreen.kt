@@ -114,6 +114,7 @@ data class BridgeUiState(
     val unconfirmedCurrent: Boolean = false,
     val transportMode: SeedTransportMode = SeedTransportMode.STANDARD,
     val nonEmptyToken: Boolean = false,
+    val rememberAccount: Boolean = false,
     val safAuthorized: Boolean = false,
     val gameReadyConfirmation: Boolean = false,
     val overlayPermissionExplanation: Boolean = false,
@@ -130,7 +131,7 @@ fun BridgeScreen(
     onSelectInstalledGame: (InstalledGame) -> Unit,
     onRefreshApps: () -> Unit,
     onSelectTransportMode: (SeedTransportMode) -> Unit,
-    onApplyNonEmptyToken: (Boolean) -> Unit,
+    onApplyCompatibility: (Boolean, Boolean) -> Unit,
     onAuthorizeSafDirectory: () -> Unit,
     onRevokeSafDirectory: () -> Unit,
     onPrepareIosLogin: () -> Unit,
@@ -254,7 +255,7 @@ fun BridgeScreen(
                 )
                 LoginCompatibilityCard(
                     state = state,
-                    onApplyNonEmptyToken = onApplyNonEmptyToken
+                    onApplyCompatibility = onApplyCompatibility
                 )
                 if (showDiagnostics) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -1116,7 +1117,7 @@ private fun PrepareIosCard(
 @Composable
 private fun LoginCompatibilityCard(
     state: BridgeUiState,
-    onApplyNonEmptyToken: (Boolean) -> Unit
+    onApplyCompatibility: (Boolean, Boolean) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
     val target = state.currentGame
@@ -1125,7 +1126,12 @@ private fun LoginCompatibilityCard(
     var pendingNonEmptyToken by remember(target?.spec?.packageName, showSettings) {
         mutableStateOf(state.nonEmptyToken)
     }
-    val hasPendingChange = pendingNonEmptyToken != state.nonEmptyToken
+    var pendingRememberAccount by remember(target?.spec?.packageName, showSettings) {
+        mutableStateOf(state.rememberAccount)
+    }
+    val hasPendingChange =
+        pendingNonEmptyToken != state.nonEmptyToken ||
+            pendingRememberAccount != state.rememberAccount
 
     Card(
         shape = RoundedCornerShape(18.dp),
@@ -1147,7 +1153,7 @@ private fun LoginCompatibilityCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text("登录兼容性设置", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    if (state.nonEmptyToken) "非空占位：开" else "非空占位：关",
+                    "非空占位：${if (state.nonEmptyToken) "开" else "关"} · 旧版兼容：${if (state.rememberAccount) "开" else "关"}",
                     style = MaterialTheme.typography.bodySmall,
                     color = scheme.onSurfaceVariant
                 )
@@ -1189,7 +1195,32 @@ private fun LoginCompatibilityCard(
                         )
                     }
                     Text(
-                        "确认更改后重新执行 iOS 准备；不保证游戏接受。",
+                        "旧版组件兼容（记住标记）",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            "启用 is_remember",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = pendingRememberAccount,
+                            onCheckedChange = { pendingRememberAccount = it },
+                            enabled = enabled
+                        )
+                    }
+                    Text(
+                        "默认关闭。新版《阴阳师》等游戏保持关闭，有助于避免快捷登录列表隐藏旧账号；仅部分旧版 MPay 组件需要开启。此项与非空占位凭证无关。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant
+                    )
+                    Text(
+                        "更改后重新执行 iOS 准备；已丢失的快捷登录记录不一定自动恢复，实际结果请在游戏内核对。",
                         style = MaterialTheme.typography.bodySmall,
                         color = scheme.onSurfaceVariant
                     )
@@ -1199,7 +1230,9 @@ private fun LoginCompatibilityCard(
                 Button(
                     onClick = {
                         showSettings = false
-                        if (hasPendingChange) onApplyNonEmptyToken(pendingNonEmptyToken)
+                        if (hasPendingChange) {
+                            onApplyCompatibility(pendingNonEmptyToken, pendingRememberAccount)
+                        }
                     },
                     enabled = enabled
                 ) { Text("确定") }
@@ -1472,7 +1505,7 @@ private fun BridgeScreenPreview() {
             onSelectInstalledGame = {},
             onRefreshApps = {},
             onSelectTransportMode = {},
-            onApplyNonEmptyToken = {},
+            onApplyCompatibility = { _, _ -> },
             onAuthorizeSafDirectory = {},
             onRevokeSafDirectory = {},
             onPrepareIosLogin = {},
