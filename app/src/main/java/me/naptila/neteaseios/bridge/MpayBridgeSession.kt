@@ -526,6 +526,8 @@ internal enum class BridgeLogEvent(val label: String) {
     TRANSPORT_CACHE("准备方式：标准缓存"),
     PLACEHOLDER_ON("兼容设置：非空占位已开启"),
     PLACEHOLDER_OFF("兼容设置：非空占位已关闭"),
+    LEGACY_REMEMBER_ON("旧版组件记住标记：开启（is_remember=true）"),
+    LEGACY_REMEMBER_OFF("旧版组件记住标记：关闭（省略 is_remember）"),
     OVERLAY_CONFIRMED("在游戏悬浮窗点击确定（游戏通常仍在前台）"),
     ASSISTANT_CONFIRMED("返回助手弹窗点击确定（游戏可能进入后台）"),
     GAME_REOPENED_BEFORE_BRIDGE("无浮窗确认后重新切回游戏，再执行桥接"),
