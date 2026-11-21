@@ -547,6 +547,11 @@ class MainActivity : ComponentActivity() {
             this, spec.packageName,
             if (uiState.nonEmptyToken) BridgeLogEvent.PLACEHOLDER_ON else BridgeLogEvent.PLACEHOLDER_OFF
         )
+        BridgeDiagnosticLog.record(
+            this, spec.packageName,
+            if (uiState.rememberAccount) BridgeLogEvent.LEGACY_REMEMBER_ON
+            else BridgeLogEvent.LEGACY_REMEMBER_OFF
+        )
         val attempt = UUID.randomUUID().toString()
         activeAttempt = attempt
         history.begin(game, attempt)
